@@ -1,4 +1,4 @@
-import PricingTool from '@/components/PricingTool';
+import PricingTool from "../components/PricingTool";
 
 export default function Page() {
   return <PricingTool />;
