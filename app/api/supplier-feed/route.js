@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { fallbackSupplierData, parseSupplierCsv } from '../../../lib/sheet';
 
 const SHEET_URL =
-  'https://docs.google.com/spreadsheets/d/1ogdEGyH8fzrVbqrMcNDuHVjk9cE32XDKN5TOWX8D2Ak/export?format=csv&gid=0';
+  'https://docs.google.com/spreadsheets/d/1VaZfKpSnjYcoqGL4oewT4IA8owpGCTHtU71yv5jcjqk/export?format=csv&gid=0';
 
 export async function GET() {
   try {
@@ -35,7 +35,7 @@ export async function GET() {
       validUntil: fallback.validUntil || '',
       products: fallback.products || [],
       usedFallback: true,
-      error: error?.message || 'Errore nel caricamento del feed fornitore',
+      error: error?.message || 'Errore nel caricamento del feed',
       sheetUrl: SHEET_URL.replace('/export?format=csv&gid=0', '/edit?gid=0#gid=0')
     });
   }
