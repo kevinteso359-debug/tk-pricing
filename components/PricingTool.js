@@ -12,17 +12,18 @@ import {
   sanitizeForCsv
 } from '../lib/pricing';
 
-const STORAGE_KEY = 'tkcollectibles-platform-pricing-v2';
+const STORAGE_KEY = 'tkcollectibles-platform-pricing-v3';
 
 function cloneDefaults() {
   return {
     settings: {
       ...DEFAULT_GLOBAL_SETTINGS,
       sourceCurrency: 'EUR',
-      vatRate: DEFAULT_GLOBAL_SETTINGS.vatRate ?? 0.22
+      vatRate: DEFAULT_GLOBAL_SETTINGS.vatRate ?? 0.22,
+      realShippingCostExVat: DEFAULT_GLOBAL_SETTINGS.realShippingCostExVat ?? 4.36
     },
     platforms: DEFAULT_PLATFORMS.map((item) => ({ ...item })),
-    itemMargins: {}
+    itemTargets: {}
   };
 }
 
@@ -55,6 +56,7 @@ export default function PricingTool() {
             ...DEFAULT_GLOBAL_SETTINGS,
             sourceCurrency: 'EUR',
             vatRate: DEFAULT_GLOBAL_SETTINGS.vatRate ?? 0.22,
+            realShippingCostExVat: DEFAULT_GLOBAL_SETTINGS.realShippingCostExVat ?? 4.36,
             ...(parsed.settings || {}),
             sourceCurrency: 'EUR'
           },
@@ -62,11 +64,11 @@ export default function PricingTool() {
             ...platform,
             ...((parsed.platforms || []).find((item) => item.key === platform.key) || {})
           })),
-          itemMargins: parsed.itemMargins || {}
+          itemTargets: parsed.itemTargets || {}
         });
       }
     } catch {
-      // ignore corrupted storage
+      // ignore
     }
   }, []);
 
@@ -133,13 +135,19 @@ export default function PricingTool() {
 
         const platformResults = Object.fromEntries(
           state.platforms.map((platform) => {
-            const overrideMargin = state.itemMargins?.[product.id]?.[platform.key];
+            const override = state.itemTargets?.[product.id]?.[platform.key];
+
             const effectivePlatform = {
               ...platform,
+              targetMode: override?.targetMode ?? platform.targetMode,
               targetMarginPct:
-                overrideMargin !== undefined && overrideMargin !== null && overrideMargin !== ''
-                  ? Number(overrideMargin)
-                  : platform.targetMarginPct
+                override?.targetMarginPct !== undefined && override?.targetMarginPct !== ''
+                  ? Number(override.targetMarginPct)
+                  : platform.targetMarginPct,
+              targetMarginEur:
+                override?.targetMarginEur !== undefined && override?.targetMarginEur !== ''
+                  ? Number(override.targetMarginEur)
+                  : platform.targetMarginEur
             };
 
             return [
@@ -195,43 +203,37 @@ export default function PricingTool() {
     }));
   }
 
-  function updateItemMargin(productId, platformKey, value) {
+  function updateItemTarget(productId, platformKey, field, value) {
     setState((current) => ({
       ...current,
-      itemMargins: {
-        ...current.itemMargins,
+      itemTargets: {
+        ...current.itemTargets,
         [productId]: {
-          ...(current.itemMargins?.[productId] || {}),
-          [platformKey]: value
+          ...(current.itemTargets?.[productId] || {}),
+          [platformKey]: {
+            ...(current.itemTargets?.[productId]?.[platformKey] || {}),
+            [field]: value
+          }
         }
       }
     }));
   }
 
-  function resetItemMargins(productId) {
+  function resetItemTargets(productId) {
     setState((current) => {
-      const nextItemMargins = { ...(current.itemMargins || {}) };
-      delete nextItemMargins[productId];
+      const next = { ...(current.itemTargets || {}) };
+      delete next[productId];
 
       return {
         ...current,
-        itemMargins: nextItemMargins
+        itemTargets: next
       };
     });
   }
 
   function resetDefaults() {
     window.localStorage.removeItem(STORAGE_KEY);
-
-    setState({
-      settings: {
-        ...DEFAULT_GLOBAL_SETTINGS,
-        sourceCurrency: 'EUR',
-        vatRate: DEFAULT_GLOBAL_SETTINGS.vatRate ?? 0.22
-      },
-      platforms: DEFAULT_PLATFORMS.map((item) => ({ ...item })),
-      itemMargins: {}
-    });
+    setState(cloneDefaults());
   }
 
   function exportCsv() {
@@ -244,11 +246,13 @@ export default function PricingTool() {
       'Supplier cost (€)',
       'Landed cost (€)',
       ...state.platforms.flatMap((platform) => [
-        `${platform.name} target margin`,
-        `${platform.name} price IVA incl. (€)`,
-        `${platform.name} net real (€)`,
-        `${platform.name} profit (€)`,
-        `${platform.name} markup on landed`
+        `${platform.name} target mode`,
+        `${platform.name} target`,
+        `${platform.name} shipping customer`,
+        `${platform.name} price IVA incl.`,
+        `${platform.name} net real`,
+        `${platform.name} profit`,
+        `${platform.name} markup landed`
       ])
     ];
 
@@ -265,14 +269,20 @@ export default function PricingTool() {
         row.landedCost.toFixed(2),
         ...state.platforms.flatMap((platform) => {
           const result = row.platformResults[platform.key];
-          const overrideMargin = state.itemMargins?.[row.id]?.[platform.key];
-          const effectiveMargin =
-            overrideMargin !== undefined && overrideMargin !== null && overrideMargin !== ''
-              ? Number(overrideMargin)
-              : Number(platform.targetMarginPct);
+          const override = state.itemTargets?.[row.id]?.[platform.key];
+
+          const targetMode = override?.targetMode ?? platform.targetMode;
+          const targetValue =
+            targetMode === 'euro'
+              ? (override?.targetMarginEur ?? platform.targetMarginEur)
+              : (override?.targetMarginPct ?? platform.targetMarginPct);
 
           return [
-            `${(effectiveMargin * 100).toFixed(1)}%`,
+            targetMode,
+            targetMode === 'euro'
+              ? formatCurrency(targetValue)
+              : formatPercent(targetValue),
+            formatCurrency(platform.customerShippingInclVat),
             result.salePrice.toFixed(2),
             (result.netReal ?? 0).toFixed(2),
             result.profit.toFixed(2),
@@ -300,8 +310,8 @@ export default function PricingTool() {
           <span className="eyebrow">TKCollectibles · internal pricing tool</span>
           <h1>Price list per piattaforma</h1>
           <p>
-            Prezzo finale IVA inclusa costruito con: landed + margine desiderato + fee piattaforma + IVA.
-            Ti mostra anche il netto reale in euro e il markup sul landed.
+            Lo scopo del tool è dirti a che prezzo vendere per ottenere il netto che vuoi.
+            Il prezzo finale include fee piattaforma, IVA e logica spedizione.
           </p>
         </div>
 
@@ -395,6 +405,16 @@ export default function PricingTool() {
                 onChange={(e) => updateSetting('misc', e.target.value)}
               />
             </label>
+
+            <label>
+              <span>Spedizione reale tua (€ ex IVA)</span>
+              <input
+                type="number"
+                step="0.01"
+                value={state.settings.realShippingCostExVat}
+                onChange={(e) => updateSetting('realShippingCostExVat', e.target.value)}
+              />
+            </label>
           </div>
         </div>
 
@@ -443,7 +463,7 @@ export default function PricingTool() {
             <p className="helper error">{supplierData.error}</p>
           ) : (
             <p className="helper">
-              Le modifiche restano salvate nel browser. I margini articolo sovrascrivono quelli globali.
+              Fee % applicate sul totale incassato: articolo + spedizione cliente.
             </p>
           )}
         </div>
@@ -451,8 +471,8 @@ export default function PricingTool() {
 
       <section className="panel">
         <div className="panel-head">
-          <h2>Fee e margini globali per piattaforma</h2>
-          <p className="helper">Tutti i valori percentuali sono decimali: 0.115 = 11,5%</p>
+          <h2>Fee e target globali per piattaforma</h2>
+          <p className="helper">Puoi usare target in % oppure target in € netti.</p>
         </div>
 
         <div className="platform-grid">
@@ -492,7 +512,28 @@ export default function PricingTool() {
                 </label>
 
                 <label>
-                  <span>Margine target globale</span>
+                  <span>Spedizione cliente IVA incl.</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={platform.customerShippingInclVat}
+                    onChange={(e) => updatePlatform(platform.key, 'customerShippingInclVat', e.target.value)}
+                  />
+                </label>
+
+                <label>
+                  <span>Modalità target</span>
+                  <select
+                    value={platform.targetMode}
+                    onChange={(e) => updatePlatform(platform.key, 'targetMode', e.target.value)}
+                  >
+                    <option value="percent">% sul landed</option>
+                    <option value="euro">€ netti</option>
+                  </select>
+                </label>
+
+                <label>
+                  <span>Target %</span>
                   <input
                     type="number"
                     step="0.01"
@@ -502,12 +543,12 @@ export default function PricingTool() {
                 </label>
 
                 <label>
-                  <span>Subsidy spedizione €</span>
+                  <span>Target €</span>
                   <input
                     type="number"
                     step="0.01"
-                    value={platform.shippingSubsidy}
-                    onChange={(e) => updatePlatform(platform.key, 'shippingSubsidy', e.target.value)}
+                    value={platform.targetMarginEur}
+                    onChange={(e) => updatePlatform(platform.key, 'targetMarginEur', e.target.value)}
                   />
                 </label>
 
@@ -530,7 +571,7 @@ export default function PricingTool() {
         <div className="panel-head">
           <h2>Prezzi consigliati</h2>
           <p className="helper">
-            Prezzo finale IVA inclusa + netto reale in euro + markup sul landed.
+            Prezzo finale IVA inclusa da pubblicare + netto reale in euro + markup sul landed.
           </p>
         </div>
 
@@ -569,11 +610,12 @@ export default function PricingTool() {
 
                     {state.platforms.map((platform) => {
                       const result = row.platformResults[platform.key];
-                      const overrideMargin = state.itemMargins?.[row.id]?.[platform.key];
-                      const effectiveMargin =
-                        overrideMargin !== undefined && overrideMargin !== null && overrideMargin !== ''
-                          ? Number(overrideMargin)
-                          : Number(platform.targetMarginPct);
+                      const override = state.itemTargets?.[row.id]?.[platform.key];
+                      const targetMode = override?.targetMode ?? platform.targetMode;
+                      const targetLabel =
+                        targetMode === 'euro'
+                          ? formatCurrency(override?.targetMarginEur ?? platform.targetMarginEur)
+                          : formatPercent(override?.targetMarginPct ?? platform.targetMarginPct);
 
                       return (
                         <td key={`${row.id}-${platform.key}`}>
@@ -586,7 +628,7 @@ export default function PricingTool() {
                               markup landed {formatPercent(result.markupOnLandedPct)}
                             </span>
                             <span style={{ display: 'block', marginTop: 4, opacity: 0.8 }}>
-                              target {formatPercent(effectiveMargin)}
+                              target {targetLabel}
                             </span>
                           </div>
                         </td>
@@ -602,51 +644,104 @@ export default function PricingTool() {
                       <div
                         style={{
                           display: 'grid',
-                          gridTemplateColumns: `minmax(220px, 1.2fr) repeat(${state.platforms.length}, minmax(140px, 1fr)) auto`,
+                          gridTemplateColumns: `minmax(240px, 1.2fr) repeat(${state.platforms.length}, minmax(180px, 1fr)) auto`,
                           gap: '12px',
                           alignItems: 'end'
                         }}
                       >
                         <div>
                           <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
-                            Margini personalizzati per questo articolo
+                            Target personalizzati per questo articolo
                           </div>
                           <div style={{ fontSize: 13, opacity: 0.7 }}>
-                            Lascia vuoto per usare i margini globali.
+                            Puoi scegliere se impostare il target in % sul landed oppure in € netti.
                           </div>
                         </div>
 
                         {state.platforms.map((platform) => {
-                          const overrideMargin = state.itemMargins?.[row.id]?.[platform.key] ?? '';
+                          const override = state.itemTargets?.[row.id]?.[platform.key] || {};
+                          const targetMode = override.targetMode ?? platform.targetMode;
+                          const targetMarginPct =
+                            override.targetMarginPct ?? platform.targetMarginPct;
+                          const targetMarginEur =
+                            override.targetMarginEur ?? platform.targetMarginEur;
 
                           return (
-                            <label key={`${row.id}-${platform.key}-input`} style={{ display: 'block' }}>
-                              <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
-                                {platform.name} margine
-                              </span>
-                              <input
-                                type="number"
-                                step="0.01"
-                                placeholder={String(platform.targetMarginPct)}
-                                value={overrideMargin}
-                                onChange={(e) => updateItemMargin(row.id, platform.key, e.target.value)}
-                                style={{
-                                  width: '100%',
-                                  background: 'rgba(255,255,255,0.04)',
-                                  border: '1px solid rgba(255,255,255,0.12)',
-                                  color: 'white',
-                                  borderRadius: 10,
-                                  padding: '10px 12px'
-                                }}
-                              />
-                            </label>
+                            <div key={`${row.id}-${platform.key}-input`}>
+                              <label style={{ display: 'block', marginBottom: 8 }}>
+                                <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
+                                  {platform.name} modalità
+                                </span>
+                                <select
+                                  value={targetMode}
+                                  onChange={(e) =>
+                                    updateItemTarget(row.id, platform.key, 'targetMode', e.target.value)
+                                  }
+                                  style={{
+                                    width: '100%',
+                                    background: 'rgba(255,255,255,0.04)',
+                                    border: '1px solid rgba(255,255,255,0.12)',
+                                    color: 'white',
+                                    borderRadius: 10,
+                                    padding: '10px 12px'
+                                  }}
+                                >
+                                  <option value="percent">% sul landed</option>
+                                  <option value="euro">€ netti</option>
+                                </select>
+                              </label>
+
+                              <label style={{ display: 'block', marginBottom: 8 }}>
+                                <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
+                                  {platform.name} target %
+                                </span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={targetMarginPct}
+                                  onChange={(e) =>
+                                    updateItemTarget(row.id, platform.key, 'targetMarginPct', e.target.value)
+                                  }
+                                  style={{
+                                    width: '100%',
+                                    background: 'rgba(255,255,255,0.04)',
+                                    border: '1px solid rgba(255,255,255,0.12)',
+                                    color: 'white',
+                                    borderRadius: 10,
+                                    padding: '10px 12px'
+                                  }}
+                                />
+                              </label>
+
+                              <label style={{ display: 'block' }}>
+                                <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
+                                  {platform.name} target €
+                                </span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={targetMarginEur}
+                                  onChange={(e) =>
+                                    updateItemTarget(row.id, platform.key, 'targetMarginEur', e.target.value)
+                                  }
+                                  style={{
+                                    width: '100%',
+                                    background: 'rgba(255,255,255,0.04)',
+                                    border: '1px solid rgba(255,255,255,0.12)',
+                                    color: 'white',
+                                    borderRadius: 10,
+                                    padding: '10px 12px'
+                                  }}
+                                />
+                              </label>
+                            </div>
                           );
                         })}
 
                         <div>
                           <button
                             className="ghost-button"
-                            onClick={() => resetItemMargins(row.id)}
+                            onClick={() => resetItemTargets(row.id)}
                             style={{ width: '100%' }}
                           >
                             Reset articolo
