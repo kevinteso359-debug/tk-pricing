@@ -246,11 +246,9 @@ export default function PricingTool() {
       ...state.platforms.flatMap((platform) => [
         `${platform.name} target margin`,
         `${platform.name} price IVA incl. (€)`,
-        `${platform.name} imponibile (€)`,
-        `${platform.name} VAT (€)`,
-        `${platform.name} fees (€)`,
+        `${platform.name} net real (€)`,
         `${platform.name} profit (€)`,
-        `${platform.name} margin`
+        `${platform.name} markup on landed`
       ])
     ];
 
@@ -276,11 +274,9 @@ export default function PricingTool() {
           return [
             `${(effectiveMargin * 100).toFixed(1)}%`,
             result.salePrice.toFixed(2),
-            (result.salePriceExVat ?? 0).toFixed(2),
-            (result.vatAmount ?? 0).toFixed(2),
-            (result.feesAmount ?? 0).toFixed(2),
+            (result.netReal ?? 0).toFixed(2),
             result.profit.toFixed(2),
-            `${(result.marginPct * 100).toFixed(1)}%`
+            `${((result.markupOnLandedPct ?? 0) * 100).toFixed(1)}%`
           ];
         })
       ];
@@ -304,9 +300,8 @@ export default function PricingTool() {
           <span className="eyebrow">TKCollectibles · internal pricing tool</span>
           <h1>Price list per piattaforma</h1>
           <p>
-            Usa la tua price list come sorgente e prende il costo fornitore direttamente dalla colonna
-            Prezzo Euro. I prezzi mostrati nelle piattaforme sono IVA inclusa, cioè il prezzo finale
-            da pubblicare per ottenere il margine desiderato.
+            Prezzo finale IVA inclusa costruito con: landed + margine desiderato + fee piattaforma + IVA.
+            Ti mostra anche il netto reale in euro e il markup sul landed.
           </p>
         </div>
 
@@ -535,7 +530,7 @@ export default function PricingTool() {
         <div className="panel-head">
           <h2>Prezzi consigliati</h2>
           <p className="helper">
-            I prezzi mostrati sono il prezzo finale IVA inclusa da mettere in vendita.
+            Prezzo finale IVA inclusa + netto reale in euro + markup sul landed.
           </p>
         </div>
 
@@ -585,7 +580,10 @@ export default function PricingTool() {
                           <div className="price-cell">
                             <strong>{formatCurrency(result.salePrice)}</strong>
                             <span>
-                              utile {formatCurrency(result.profit)} · {formatPercent(result.marginPct)}
+                              netto {formatCurrency(result.netReal)} · utile {formatCurrency(result.profit)}
+                            </span>
+                            <span style={{ display: 'block', marginTop: 4, opacity: 0.8 }}>
+                              markup landed {formatPercent(result.markupOnLandedPct)}
                             </span>
                             <span style={{ display: 'block', marginTop: 4, opacity: 0.8 }}>
                               target {formatPercent(effectiveMargin)}
