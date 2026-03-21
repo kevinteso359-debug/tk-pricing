@@ -1,5 +1,5 @@
-import { SHEET_CSV_URL, SHEET_EDIT_URL } from '@/lib/config';
-import { fallbackSupplierData, parseSupplierCsv } from '@/lib/sheet';
+import { SHEET_CSV_URL, SHEET_EDIT_URL } from "../../../lib/config";
+import { fallbackSupplierData, parseSupplierCsv } "../../../lib/sheet";
 
 export const dynamic = 'force-dynamic';
 
