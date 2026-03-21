@@ -9,15 +9,14 @@ import {
   formatPercent,
   getLandedCostEur,
   getSourceCostEur,
-  sanitizeForCsv,
-  toNumber
-} from '@/lib/pricing';
+  sanitizeForCsv
+} from '../lib/pricing';
 
 const STORAGE_KEY = 'tkcollectibles-platform-pricing-v1';
 
 function cloneDefaults() {
   return {
-    settings: { ...DEFAULT_GLOBAL_SETTINGS },
+    settings: { ...DEFAULT_GLOBAL_SETTINGS, sourceCurrency: 'JPY' },
     platforms: DEFAULT_PLATFORMS.map((item) => ({ ...item }))
   };
 }
@@ -30,8 +29,10 @@ export default function PricingTool() {
     sheetUrl: '',
     status: 'loading',
     usedFallback: false,
-    error: ''
+    error: '',
+    fx: null
   });
+
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [sectionFilter, setSectionFilter] = useState('all');
@@ -41,10 +42,17 @@ export default function PricingTool() {
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
+
       if (raw) {
         const parsed = JSON.parse(raw);
+
         setState({
-          settings: { ...DEFAULT_GLOBAL_SETTINGS, ...(parsed.settings || {}) },
+          settings: {
+            ...DEFAULT_GLOBAL_SETTINGS,
+            sourceCurrency: 'JPY',
+            ...(parsed.settings || {}),
+            sourceCurrency: 'JPY'
+          },
           platforms: DEFAULT_PLATFORMS.map((platform) => ({
             ...platform,
             ...((parsed.platforms || []).find((item) => item.key === platform.key) || {})
@@ -52,7 +60,7 @@ export default function PricingTool() {
         });
       }
     } catch {
-      // ignore corrupted localStorage state
+      // ignore
     }
   }, []);
 
@@ -65,25 +73,41 @@ export default function PricingTool() {
 
     async function loadData() {
       setLoading(true);
+
       try {
         const response = await fetch('/api/supplier-feed', { cache: 'no-store' });
         const data = await response.json();
-        if (active) setSupplierData(data);
-      } catch (error) {
-        if (active) {
-          setSupplierData((current) => ({
+
+        if (!active) return;
+
+        setSupplierData(data);
+
+        if (data?.fx?.fxJpyToEur) {
+          setState((current) => ({
             ...current,
-            status: 'fallback',
-            usedFallback: true,
-            error: error.message || 'Errore nel caricamento del feed.'
+            settings: {
+              ...current.settings,
+              sourceCurrency: 'JPY',
+              fxJpyToEur: data.fx.fxJpyToEur
+            }
           }));
         }
+      } catch (error) {
+        if (!active) return;
+
+        setSupplierData((current) => ({
+          ...current,
+          status: 'fallback',
+          usedFallback: true,
+          error: error.message || 'Errore nel caricamento del feed.'
+        }));
       } finally {
         if (active) setLoading(false);
       }
     }
 
     loadData();
+
     return () => {
       active = false;
     };
@@ -128,6 +152,7 @@ export default function PricingTool() {
   const totals = useMemo(() => {
     const rowCount = tableRows.length || 1;
     const averageLanded = tableRows.reduce((sum, row) => sum + row.landedCost, 0) / rowCount;
+
     return {
       products: tableRows.length,
       averageLanded,
@@ -141,7 +166,8 @@ export default function PricingTool() {
       ...current,
       settings: {
         ...current.settings,
-        [key]: value
+        [key]: value,
+        sourceCurrency: 'JPY'
       }
     }));
   }
@@ -161,7 +187,16 @@ export default function PricingTool() {
   }
 
   function resetDefaults() {
-    setState(cloneDefaults());
+    window.localStorage.removeItem(STORAGE_KEY);
+
+    setState({
+      settings: {
+        ...DEFAULT_GLOBAL_SETTINGS,
+        sourceCurrency: 'JPY',
+        fxJpyToEur: supplierData?.fx?.fxJpyToEur || DEFAULT_GLOBAL_SETTINGS.fxJpyToEur
+      },
+      platforms: DEFAULT_PLATFORMS.map((item) => ({ ...item }))
+    });
   }
 
   function exportCsv() {
@@ -172,7 +207,11 @@ export default function PricingTool() {
       'Stock',
       'Supplier cost (€)',
       'Landed cost (€)',
-      ...state.platforms.flatMap((platform) => [`${platform.name} price (€)`, `${platform.name} profit (€)`, `${platform.name} margin`])
+      ...state.platforms.flatMap((platform) => [
+        `${platform.name} price (€)`,
+        `${platform.name} profit (€)`,
+        `${platform.name} margin`
+      ])
     ];
 
     const lines = [headers.join(',')];
@@ -187,9 +226,14 @@ export default function PricingTool() {
         row.landedCost.toFixed(2),
         ...state.platforms.flatMap((platform) => {
           const result = row.platformResults[platform.key];
-          return [result.salePrice.toFixed(2), result.profit.toFixed(2), `${(result.marginPct * 100).toFixed(1)}%`];
+          return [
+            result.salePrice.toFixed(2),
+            result.profit.toFixed(2),
+            `${(result.marginPct * 100).toFixed(1)}%`
+          ];
         })
       ];
+
       lines.push(cells.map(sanitizeForCsv).join(','));
     });
 
@@ -213,6 +257,7 @@ export default function PricingTool() {
             Cardmarket, Shopify e vendita diretta in base alle fee che decidi tu.
           </p>
         </div>
+
         <div className="hero-stats">
           <div className="stat-card">
             <span>Prodotti visibili</span>
@@ -231,11 +276,19 @@ export default function PricingTool() {
 
       <section className="status-row">
         <div className={`status-pill ${supplierData.status === 'live' ? 'ok' : 'warn'}`}>
-          {loading ? 'Caricamento feed...' : supplierData.status === 'live' ? 'Feed live dal Google Sheet' : 'Feed demo di fallback'}
+          {loading
+            ? 'Caricamento feed...'
+            : supplierData.status === 'live'
+              ? 'Feed live dal Google Sheet'
+              : 'Feed demo di fallback'}
         </div>
+
         <div className="status-meta">
           {supplierData.updatedAt && <span>{supplierData.updatedAt}</span>}
           {supplierData.validUntil && <span>{supplierData.validUntil}</span>}
+          {supplierData.fx?.jpyPerEur && (
+            <span>ECB: 1 EUR = {Number(supplierData.fx.jpyPerEur).toFixed(2)} JPY</span>
+          )}
           {supplierData.sheetUrl && (
             <a href={supplierData.sheetUrl} target="_blank" rel="noreferrer">
               Apri sheet fornitore
@@ -252,44 +305,46 @@ export default function PricingTool() {
               Reset
             </button>
           </div>
+
           <div className="form-grid">
             <label>
               <span>Valuta sorgente</span>
-              <select value={state.settings.sourceCurrency} onChange={(e) => updateSetting('sourceCurrency', e.target.value)}>
-                {['EUR', 'JPY', 'USD', 'SGD', 'AUD'].map((currency) => (
-                  <option key={currency} value={currency}>
-                    {currency}
-                  </option>
-                ))}
-              </select>
+              <input value="JPY → EUR automatico (ECB)" disabled />
             </label>
+
+            <label>
+              <span>FX JPY → EUR automatico</span>
+              <input type="number" step="0.000001" value={state.settings.fxJpyToEur} readOnly />
+            </label>
+
             <label>
               <span>Inbound shipping €/pezzo</span>
-              <input type="number" step="0.01" value={state.settings.inboundShipping} onChange={(e) => updateSetting('inboundShipping', e.target.value)} />
+              <input
+                type="number"
+                step="0.01"
+                value={state.settings.inboundShipping}
+                onChange={(e) => updateSetting('inboundShipping', e.target.value)}
+              />
             </label>
+
             <label>
               <span>Packaging €/pezzo</span>
-              <input type="number" step="0.01" value={state.settings.packaging} onChange={(e) => updateSetting('packaging', e.target.value)} />
+              <input
+                type="number"
+                step="0.01"
+                value={state.settings.packaging}
+                onChange={(e) => updateSetting('packaging', e.target.value)}
+              />
             </label>
+
             <label>
               <span>Extra misc €/pezzo</span>
-              <input type="number" step="0.01" value={state.settings.misc} onChange={(e) => updateSetting('misc', e.target.value)} />
-            </label>
-            <label>
-              <span>FX JPY → EUR</span>
-              <input type="number" step="0.0001" value={state.settings.fxJpyToEur} onChange={(e) => updateSetting('fxJpyToEur', e.target.value)} />
-            </label>
-            <label>
-              <span>FX USD → EUR</span>
-              <input type="number" step="0.0001" value={state.settings.fxUsdToEur} onChange={(e) => updateSetting('fxUsdToEur', e.target.value)} />
-            </label>
-            <label>
-              <span>FX SGD → EUR</span>
-              <input type="number" step="0.0001" value={state.settings.fxSgdToEur} onChange={(e) => updateSetting('fxSgdToEur', e.target.value)} />
-            </label>
-            <label>
-              <span>FX AUD → EUR</span>
-              <input type="number" step="0.0001" value={state.settings.fxAudToEur} onChange={(e) => updateSetting('fxAudToEur', e.target.value)} />
+              <input
+                type="number"
+                step="0.01"
+                value={state.settings.misc}
+                onChange={(e) => updateSetting('misc', e.target.value)}
+              />
             </label>
           </div>
         </div>
@@ -301,11 +356,17 @@ export default function PricingTool() {
               Export CSV
             </button>
           </div>
+
           <div className="form-grid">
             <label className="full-width">
               <span>Cerca prodotto</span>
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="BLACK BOLT, rocket, BOX..." />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="BLACK BOLT, rocket, BOX..."
+              />
             </label>
+
             <label>
               <span>Sezione</span>
               <select value={sectionFilter} onChange={(e) => setSectionFilter(e.target.value)}>
@@ -316,6 +377,7 @@ export default function PricingTool() {
                 ))}
               </select>
             </label>
+
             <label>
               <span>Unità</span>
               <select value={unitFilter} onChange={(e) => setUnitFilter(e.target.value)}>
@@ -327,7 +389,12 @@ export default function PricingTool() {
               </select>
             </label>
           </div>
-          {supplierData.error ? <p className="helper error">{supplierData.error}</p> : <p className="helper">Le modifiche restano salvate nel browser.</p>}
+
+          {supplierData.error ? (
+            <p className="helper error">{supplierData.error}</p>
+          ) : (
+            <p className="helper">Le modifiche restano salvate nel browser.</p>
+          )}
         </div>
       </section>
 
@@ -336,34 +403,71 @@ export default function PricingTool() {
           <h2>Fee per piattaforma</h2>
           <p className="helper">Tutti i valori percentuali sono decimali: 0.115 = 11,5%</p>
         </div>
+
         <div className="platform-grid">
           {state.platforms.map((platform) => (
             <div className="platform-card" key={platform.key}>
               <h3>{platform.name}</h3>
+
               <div className="form-grid compact">
                 <label>
                   <span>Marketplace fee</span>
-                  <input type="number" step="0.001" value={platform.feePct} onChange={(e) => updatePlatform(platform.key, 'feePct', e.target.value)} />
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={platform.feePct}
+                    onChange={(e) => updatePlatform(platform.key, 'feePct', e.target.value)}
+                  />
                 </label>
+
                 <label>
                   <span>Pagamento fee</span>
-                  <input type="number" step="0.001" value={platform.paymentPct} onChange={(e) => updatePlatform(platform.key, 'paymentPct', e.target.value)} />
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={platform.paymentPct}
+                    onChange={(e) => updatePlatform(platform.key, 'paymentPct', e.target.value)}
+                  />
                 </label>
+
                 <label>
                   <span>Fee fissa €</span>
-                  <input type="number" step="0.01" value={platform.fixedFee} onChange={(e) => updatePlatform(platform.key, 'fixedFee', e.target.value)} />
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={platform.fixedFee}
+                    onChange={(e) => updatePlatform(platform.key, 'fixedFee', e.target.value)}
+                  />
                 </label>
+
                 <label>
                   <span>Margine target</span>
-                  <input type="number" step="0.01" value={platform.targetMarginPct} onChange={(e) => updatePlatform(platform.key, 'targetMarginPct', e.target.value)} />
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={platform.targetMarginPct}
+                    onChange={(e) => updatePlatform(platform.key, 'targetMarginPct', e.target.value)}
+                  />
                 </label>
+
                 <label>
                   <span>Subsidy spedizione €</span>
-                  <input type="number" step="0.01" value={platform.shippingSubsidy} onChange={(e) => updatePlatform(platform.key, 'shippingSubsidy', e.target.value)} />
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={platform.shippingSubsidy}
+                    onChange={(e) => updatePlatform(platform.key, 'shippingSubsidy', e.target.value)}
+                  />
                 </label>
+
                 <label>
                   <span>Finale prezzo</span>
-                  <input type="number" step="0.1" value={platform.ending} onChange={(e) => updatePlatform(platform.key, 'ending', e.target.value)} />
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={platform.ending}
+                    onChange={(e) => updatePlatform(platform.key, 'ending', e.target.value)}
+                  />
                 </label>
               </div>
             </div>
@@ -374,8 +478,11 @@ export default function PricingTool() {
       <section className="panel table-panel">
         <div className="panel-head">
           <h2>Prezzi consigliati</h2>
-          <p className="helper">Formula base: prezzo minimo che copre landed cost + fee piattaforma + margine target.</p>
+          <p className="helper">
+            Formula base: prezzo minimo che copre landed cost + fee piattaforma + margine target.
+          </p>
         </div>
+
         <div className="table-wrap">
           <table>
             <thead>
@@ -390,6 +497,7 @@ export default function PricingTool() {
                 ))}
               </tr>
             </thead>
+
             <tbody>
               {tableRows.map((row) => (
                 <tr key={row.id}>
@@ -399,12 +507,15 @@ export default function PricingTool() {
                       <span>{row.unit}</span>
                     </div>
                   </td>
+
                   <td>{row.section}</td>
                   <td>{row.stock}</td>
                   <td>{formatCurrency(row.sourceCost)}</td>
                   <td>{formatCurrency(row.landedCost)}</td>
+
                   {state.platforms.map((platform) => {
                     const result = row.platformResults[platform.key];
+
                     return (
                       <td key={`${row.id}-${platform.key}`}>
                         <div className="price-cell">
@@ -418,6 +529,7 @@ export default function PricingTool() {
                   })}
                 </tr>
               ))}
+
               {!tableRows.length && (
                 <tr>
                   <td colSpan={5 + state.platforms.length} className="empty-cell">
