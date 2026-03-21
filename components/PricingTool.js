@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { DEFAULT_GLOBAL_SETTINGS, formatCurrency } from '../lib/pricing';
 
-const STORAGE_KEY = 'tkcollectibles-pricing-v5';
+const STORAGE_KEY = 'tkcollectibles-pricing-v6';
 
 const DEFAULT_SETTINGS = {
   ...DEFAULT_GLOBAL_SETTINGS,
@@ -140,14 +140,6 @@ function getTrendInfo(trend) {
   return { icon: '➖', label: trend || 'Invariato' };
 }
 
-/*
-Fee % sul totale incassato:
-(prezzo articolo IVA incl. + spedizione cliente IVA incl.)
-
-Obiettivo:
-trovare il prezzo finale IVA inclusa dell'articolo tale che
-l'utile netto reale finale coincida con il target scelto.
-*/
 function computeSuggestedPrice(product, platform, settings) {
   const landed = getLanded(product, settings);
 
@@ -262,6 +254,7 @@ export default function PricingTool() {
   const [sectionFilter, setSectionFilter] = useState('all');
   const [unitFilter, setUnitFilter] = useState('all');
   const [state, setState] = useState(cloneDefaults());
+  const [openRows, setOpenRows] = useState({});
 
   useEffect(() => {
     try {
@@ -467,6 +460,13 @@ export default function PricingTool() {
   function resetDefaults() {
     window.localStorage.removeItem(STORAGE_KEY);
     setState(cloneDefaults());
+  }
+
+  function toggleRow(productId) {
+    setOpenRows((current) => ({
+      ...current,
+      [productId]: !current[productId]
+    }));
   }
 
   return (
@@ -775,191 +775,229 @@ export default function PricingTool() {
             </thead>
 
             <tbody>
-              {tableRows.map((row) => (
-                <Fragment key={row.id}>
-                  <tr>
-                    <td>
-                      <div className="product-cell">
-                        <strong>{row.name}</strong>
-                        <span>{row.unit}</span>
-                      </div>
-                    </td>
+              {tableRows.map((row) => {
+                const isOpen = Boolean(openRows[row.id]);
 
-                    <td>{row.section}</td>
-                    <td>
-                      <span title={row.trendInfo.label}>
-                        {row.trendInfo.icon} {row.trendInfo.label}
-                      </span>
-                    </td>
-                    <td>{row.yenPrice ? `¥${row.yenPrice.toLocaleString('it-IT')}` : '-'}</td>
-                    <td>{formatCurrency(row.cost)}</td>
-                    <td>{formatCurrency(row.landed)}</td>
+                return (
+                  <Fragment key={row.id}>
+                    <tr>
+                      <td>
+                        <div className="product-cell">
+                          <strong>{row.name}</strong>
+                          <span>{row.unit}</span>
+                        </div>
+                      </td>
 
-                    {state.platforms.map((platform) => {
-                      const result = row.platformResults[platform.key];
-                      const suggested = result.suggested;
-                      const current = result.current;
-                      const effectivePlatform = result.effectivePlatform;
+                      <td>{row.section}</td>
+                      <td>
+                        <span title={row.trendInfo.label}>
+                          {row.trendInfo.icon} {row.trendInfo.label}
+                        </span>
+                      </td>
+                      <td>{row.yenPrice ? `¥${row.yenPrice.toLocaleString('it-IT')}` : '-'}</td>
+                      <td>{formatCurrency(row.cost)}</td>
+                      <td>{formatCurrency(row.landed)}</td>
 
-                      return (
-                        <td key={`${row.id}-${platform.key}`}>
-                          <div className="price-cell">
-                            <strong>{formatCurrency(current?.salePrice ?? suggested.salePrice)}</strong>
-                            <span>
-                              netto {formatCurrency(current?.netReal ?? suggested.netReal)} · margine reale {formatPercent(current?.realMarginPct ?? suggested.realMarginPct)}
-                            </span>
-                            <span style={{ display: 'block', marginTop: 4, opacity: 0.8 }}>
-                              utile {formatCurrency(current?.profit ?? suggested.profit)} · markup landed {formatPercent(current?.markupOnLandedPct ?? suggested.markupOnLandedPct)}
-                            </span>
-                            <span style={{ display: 'block', marginTop: 4, opacity: 0.8 }}>
-                              target {targetLabel(effectivePlatform)}
-                            </span>
-                            <span style={{ display: 'block', marginTop: 6, opacity: 0.9 }}>
-                              suggerito {formatCurrency(suggested.salePrice)}
-                            </span>
-                          </div>
-                        </td>
-                      );
-                    })}
-                  </tr>
+                      {state.platforms.map((platform) => {
+                        const result = row.platformResults[platform.key];
+                        const suggested = result.suggested;
+                        const current = result.current;
+                        const effectivePlatform = result.effectivePlatform;
 
-                  <tr>
-                    <td
-                      colSpan={6 + state.platforms.length}
-                      style={{ padding: '12px 20px', background: 'rgba(255,255,255,0.02)' }}
-                    >
-                      <div
+                        return (
+                          <td key={`${row.id}-${platform.key}`}>
+                            <div className="price-cell">
+                              <strong>{formatCurrency(current?.salePrice ?? suggested.salePrice)}</strong>
+                              <span>
+                                netto {formatCurrency(current?.netReal ?? suggested.netReal)} · margine reale {formatPercent(current?.realMarginPct ?? suggested.realMarginPct)}
+                              </span>
+                              <span style={{ display: 'block', marginTop: 4, opacity: 0.8 }}>
+                                utile {formatCurrency(current?.profit ?? suggested.profit)} · markup landed {formatPercent(current?.markupOnLandedPct ?? suggested.markupOnLandedPct)}
+                              </span>
+                              <span style={{ display: 'block', marginTop: 4, opacity: 0.8 }}>
+                                target {targetLabel(effectivePlatform)}
+                              </span>
+                              <span style={{ display: 'block', marginTop: 6, opacity: 0.9 }}>
+                                suggerito {formatCurrency(suggested.salePrice)}
+                              </span>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+
+                    <tr>
+                      <td
+                        colSpan={6 + state.platforms.length}
                         style={{
-                          display: 'grid',
-                          gridTemplateColumns: `minmax(240px, 1.2fr) repeat(${state.platforms.length}, minmax(240px, 1fr)) auto`,
-                          gap: '12px',
-                          alignItems: 'end'
+                          padding: '12px 20px',
+                          background: 'rgba(255,255,255,0.02)',
+                          borderTop: '1px solid rgba(255,255,255,0.06)'
                         }}
                       >
-                        <div>
-                          <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
-                            Target personalizzati e prezzo finale per questo articolo
-                          </div>
-                          <div style={{ fontSize: 13, opacity: 0.7 }}>
-                            Puoi scegliere % sul landed o € netti, e impostare direttamente il prezzo finale per ogni piattaforma.
-                          </div>
-                        </div>
-
-                        {state.platforms.map((platform) => {
-                          const override = state.itemTargets?.[row.id]?.[platform.key] || {};
-                          const targetMode = override.targetMode ?? platform.targetMode;
-                          const targetMarginPct = override.targetMarginPct ?? platform.targetMarginPct;
-                          const targetMarginEur = override.targetMarginEur ?? platform.targetMarginEur;
-                          const finalPrice = override.finalPrice ?? '';
-
-                          return (
-                            <div key={`${row.id}-${platform.key}-input`}>
-                              <label style={{ display: 'block', marginBottom: 8 }}>
-                                <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
-                                  {platform.name} modalità
-                                </span>
-                                <select
-                                  value={targetMode}
-                                  onChange={(e) =>
-                                    updateItemTarget(row.id, platform.key, 'targetMode', e.target.value)
-                                  }
-                                  style={{
-                                    width: '100%',
-                                    background: 'rgba(255,255,255,0.04)',
-                                    border: '1px solid rgba(255,255,255,0.12)',
-                                    color: 'white',
-                                    borderRadius: 10,
-                                    padding: '10px 12px'
-                                  }}
-                                >
-                                  <option value="percent">% sul landed</option>
-                                  <option value="euro">€ netti</option>
-                                </select>
-                              </label>
-
-                              <label style={{ display: 'block', marginBottom: 8 }}>
-                                <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
-                                  {platform.name} target %
-                                </span>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={targetMarginPct}
-                                  onChange={(e) =>
-                                    updateItemTarget(row.id, platform.key, 'targetMarginPct', e.target.value)
-                                  }
-                                  style={{
-                                    width: '100%',
-                                    background: 'rgba(255,255,255,0.04)',
-                                    border: '1px solid rgba(255,255,255,0.12)',
-                                    color: 'white',
-                                    borderRadius: 10,
-                                    padding: '10px 12px'
-                                  }}
-                                />
-                              </label>
-
-                              <label style={{ display: 'block', marginBottom: 8 }}>
-                                <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
-                                  {platform.name} target €
-                                </span>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={targetMarginEur}
-                                  onChange={(e) =>
-                                    updateItemTarget(row.id, platform.key, 'targetMarginEur', e.target.value)
-                                  }
-                                  style={{
-                                    width: '100%',
-                                    background: 'rgba(255,255,255,0.04)',
-                                    border: '1px solid rgba(255,255,255,0.12)',
-                                    color: 'white',
-                                    borderRadius: 10,
-                                    padding: '10px 12px'
-                                  }}
-                                />
-                              </label>
-
-                              <label style={{ display: 'block' }}>
-                                <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
-                                  {platform.name} prezzo finale
-                                </span>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  value={finalPrice}
-                                  onChange={(e) =>
-                                    updateItemTarget(row.id, platform.key, 'finalPrice', e.target.value)
-                                  }
-                                  style={{
-                                    width: '100%',
-                                    background: 'rgba(255,255,255,0.04)',
-                                    border: '1px solid rgba(255,255,255,0.12)',
-                                    color: 'white',
-                                    borderRadius: 10,
-                                    padding: '10px 12px'
-                                  }}
-                                />
-                              </label>
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            gap: '16px',
+                            flexWrap: 'wrap'
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: 13, opacity: 0.9, marginBottom: 4 }}>
+                              Modifiche per questo articolo
                             </div>
-                          );
-                        })}
+                            <div style={{ fontSize: 12, opacity: 0.7 }}>
+                              Apri il pannello per modificare target e prezzo finale per piattaforma.
+                            </div>
+                          </div>
 
-                        <div>
                           <button
                             className="ghost-button"
-                            onClick={() => resetItemTargets(row.id)}
-                            style={{ width: '100%' }}
+                            onClick={() => toggleRow(row.id)}
+                            style={{ minWidth: 180 }}
                           >
-                            Reset articolo
+                            {isOpen ? '▲ Chiudi modifiche' : '▼ Apri modifiche'}
                           </button>
                         </div>
-                      </div>
-                    </td>
-                  </tr>
-                </Fragment>
-              ))}
+
+                        {isOpen && (
+                          <div
+                            style={{
+                              marginTop: 16,
+                              display: 'grid',
+                              gridTemplateColumns: `minmax(240px, 1.2fr) repeat(${state.platforms.length}, minmax(240px, 1fr)) auto`,
+                              gap: '12px',
+                              alignItems: 'end'
+                            }}
+                          >
+                            <div>
+                              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
+                                Target personalizzati e prezzo finale per questo articolo
+                              </div>
+                              <div style={{ fontSize: 13, opacity: 0.7 }}>
+                                Puoi scegliere % sul landed o € netti, e impostare direttamente il prezzo finale per ogni piattaforma.
+                              </div>
+                            </div>
+
+                            {state.platforms.map((platform) => {
+                              const override = state.itemTargets?.[row.id]?.[platform.key] || {};
+                              const targetMode = override.targetMode ?? platform.targetMode;
+                              const targetMarginPct = override.targetMarginPct ?? platform.targetMarginPct;
+                              const targetMarginEur = override.targetMarginEur ?? platform.targetMarginEur;
+                              const finalPrice = override.finalPrice ?? '';
+
+                              return (
+                                <div key={`${row.id}-${platform.key}-input`}>
+                                  <label style={{ display: 'block', marginBottom: 8 }}>
+                                    <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
+                                      {platform.name} modalità
+                                    </span>
+                                    <select
+                                      value={targetMode}
+                                      onChange={(e) =>
+                                        updateItemTarget(row.id, platform.key, 'targetMode', e.target.value)
+                                      }
+                                      style={{
+                                        width: '100%',
+                                        background: 'rgba(255,255,255,0.04)',
+                                        border: '1px solid rgba(255,255,255,0.12)',
+                                        color: 'white',
+                                        borderRadius: 10,
+                                        padding: '10px 12px'
+                                      }}
+                                    >
+                                      <option value="percent">% sul landed</option>
+                                      <option value="euro">€ netti</option>
+                                    </select>
+                                  </label>
+
+                                  <label style={{ display: 'block', marginBottom: 8 }}>
+                                    <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
+                                      {platform.name} target %
+                                    </span>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={targetMarginPct}
+                                      onChange={(e) =>
+                                        updateItemTarget(row.id, platform.key, 'targetMarginPct', e.target.value)
+                                      }
+                                      style={{
+                                        width: '100%',
+                                        background: 'rgba(255,255,255,0.04)',
+                                        border: '1px solid rgba(255,255,255,0.12)',
+                                        color: 'white',
+                                        borderRadius: 10,
+                                        padding: '10px 12px'
+                                      }}
+                                    />
+                                  </label>
+
+                                  <label style={{ display: 'block', marginBottom: 8 }}>
+                                    <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
+                                      {platform.name} target €
+                                    </span>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={targetMarginEur}
+                                      onChange={(e) =>
+                                        updateItemTarget(row.id, platform.key, 'targetMarginEur', e.target.value)
+                                      }
+                                      style={{
+                                        width: '100%',
+                                        background: 'rgba(255,255,255,0.04)',
+                                        border: '1px solid rgba(255,255,255,0.12)',
+                                        color: 'white',
+                                        borderRadius: 10,
+                                        padding: '10px 12px'
+                                      }}
+                                    />
+                                  </label>
+
+                                  <label style={{ display: 'block' }}>
+                                    <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
+                                      {platform.name} prezzo finale
+                                    </span>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={finalPrice}
+                                      onChange={(e) =>
+                                        updateItemTarget(row.id, platform.key, 'finalPrice', e.target.value)
+                                      }
+                                      style={{
+                                        width: '100%',
+                                        background: 'rgba(255,255,255,0.04)',
+                                        border: '1px solid rgba(255,255,255,0.12)',
+                                        color: 'white',
+                                        borderRadius: 10,
+                                        padding: '10px 12px'
+                                      }}
+                                    />
+                                  </label>
+                                </div>
+                              );
+                            })}
+
+                            <div>
+                              <button
+                                className="ghost-button"
+                                onClick={() => resetItemTargets(row.id)}
+                                style={{ width: '100%' }}
+                              >
+                                Reset articolo
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  </Fragment>
+                );
+              })}
 
               {!tableRows.length && (
                 <tr>
