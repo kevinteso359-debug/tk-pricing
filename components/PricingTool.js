@@ -82,6 +82,10 @@ function toNumber(value) {
   return Number.isFinite(num) ? num : 0;
 }
 
+function formatPercent(value) {
+  return `${(toNumber(value) * 100).toFixed(1)}%`;
+}
+
 function cloneDefaults() {
   return {
     settings: { ...DEFAULT_SETTINGS, sourceCurrency: 'EUR' },
@@ -122,28 +126,7 @@ function getTargetProfit(landed, platform) {
   return landed * toNumber(platform.targetMarginPct);
 }
 
-/*
-Ricostruzione coerente con il tuo flusso reale:
-
-1. Il cliente paga:
-   prezzo articolo IVA incl. + spedizione cliente IVA incl.
-
-2. eBay / piattaforma trattiene fee % sul totale incassato
-   + fee fissa + ads + coupon
-
-3. Quello che rimane va diviso per 1,22 per togliere IVA
-
-4. Poi togli:
-   - spedizione reale tua
-   - landed
-
-5. Il risultato è l'utile netto reale
-
-Vogliamo trovare il prezzo articolo IVA incl. tale che:
-utile netto reale = targetProfit
-*/
 function computeSuggestedPrice(product, platform, settings) {
-  const cost = getCost(product);
   const landed = getLanded(product, settings);
 
   const iva = toNumber(settings.iva);
@@ -170,20 +153,15 @@ function computeSuggestedPrice(product, platform, settings) {
       netAfterVat: 0,
       netReal: 0,
       profit: 0,
+      realMarginPct: 0,
       markupOnLandedPct: 0,
       targetProfit,
-      landed,
-      cost
+      landed
     };
   }
 
-  // Quello che ti deve restare prima della formula "gross-up"
   const targetBase = landed + shippingReal + targetProfit;
-
-  // Risaliamo al lordo totale incassato necessario
   const grossNeeded = ((targetBase + fixedFee) * (1 + iva)) / denominator;
-
-  // Togliamo la spedizione cliente per trovare solo il prezzo articolo
   const rawSalePrice = grossNeeded - shippingCustomer;
 
   const salePrice = roundUpWithEnding(
@@ -196,7 +174,6 @@ function computeSuggestedPrice(product, platform, settings) {
 }
 
 function computeAtListingPrice(product, platform, settings, listingPriceInclVat) {
-  const cost = getCost(product);
   const landed = getLanded(product, settings);
 
   const iva = toNumber(settings.iva);
@@ -219,7 +196,9 @@ function computeAtListingPrice(product, platform, settings, listingPriceInclVat)
   const netAfterVat = payoutAfterFees / (1 + iva);
   const netReal = netAfterVat - shippingReal;
   const profit = netReal - landed;
+
   const markupOnLandedPct = landed > 0 ? profit / landed : 0;
+  const realMarginPct = salePrice > 0 ? profit / salePrice : 0;
 
   return {
     salePrice,
@@ -229,9 +208,9 @@ function computeAtListingPrice(product, platform, settings, listingPriceInclVat)
     netAfterVat,
     netReal,
     profit,
+    realMarginPct,
     markupOnLandedPct,
-    landed,
-    cost
+    landed
   };
 }
 
@@ -239,7 +218,7 @@ function targetLabel(platform) {
   if (platform.targetMode === 'euro') {
     return formatCurrency(platform.targetMarginEur);
   }
-  return `${(toNumber(platform.targetMarginPct) * 100).toFixed(1)}%`;
+  return formatPercent(platform.targetMarginPct);
 }
 
 export default function PricingTool() {
@@ -475,8 +454,10 @@ export default function PricingTool() {
         `${platform.name} target mode`,
         `${platform.name} target`,
         `${platform.name} suggested price IVA incl.`,
-        `${platform.name} suggested profit`,
-        `${platform.name} suggested markup`,
+        `${platform.name} net real`,
+        `${platform.name} real margin %`,
+        `${platform.name} profit`,
+        `${platform.name} markup landed`,
         `${platform.name} current price`,
         `${platform.name} current profit`
       ])
@@ -500,21 +481,23 @@ export default function PricingTool() {
           const targetValue =
             targetMode === 'euro'
               ? formatCurrency(override.targetMarginEur ?? result.effectivePlatform.targetMarginEur)
-              : `${(toNumber(override.targetMarginPct ?? result.effectivePlatform.targetMarginPct) * 100).toFixed(1)}%`;
+              : formatPercent(override.targetMarginPct ?? result.effectivePlatform.targetMarginPct);
 
           return [
             targetMode,
             targetValue,
             result.suggested.salePrice.toFixed(2),
+            (result.suggested.netReal ?? 0).toFixed(2),
+            formatPercent(result.suggested.realMarginPct ?? 0),
             result.suggested.profit.toFixed(2),
-            `${(result.suggested.markupOnLandedPct * 100).toFixed(1)}%`,
+            formatPercent(result.suggested.markupOnLandedPct ?? 0),
             override.currentPrice || '',
             result.current ? result.current.profit.toFixed(2) : ''
           ];
         })
       ];
 
-      lines.push(cells.map(sanitizeForCsv).join(','));
+      lines.push(cells.map(String).join(','));
     });
 
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
@@ -814,7 +797,7 @@ export default function PricingTool() {
         <div className="panel-head">
           <h2>Prezzi consigliati</h2>
           <p className="helper">
-            Vedi il prezzo suggerito, il netto reale, il markup sul landed e — se vuoi — confronti anche il tuo prezzo attuale.
+            Vedi il prezzo suggerito, il netto reale, il margine reale %, il markup sul landed e — se vuoi — confronti anche il tuo prezzo attuale.
           </p>
         </div>
 
@@ -862,10 +845,10 @@ export default function PricingTool() {
                           <div className="price-cell">
                             <strong>{formatCurrency(suggested.salePrice)}</strong>
                             <span>
-                              netto {formatCurrency(suggested.netReal)} · utile {formatCurrency(suggested.profit)}
+                              netto {formatCurrency(suggested.netReal)} · margine reale {formatPercent(suggested.realMarginPct)}
                             </span>
                             <span style={{ display: 'block', marginTop: 4, opacity: 0.8 }}>
-                              markup landed {(suggested.markupOnLandedPct * 100).toFixed(1)}%
+                              utile {formatCurrency(suggested.profit)} · markup landed {formatPercent(suggested.markupOnLandedPct)}
                             </span>
                             <span style={{ display: 'block', marginTop: 4, opacity: 0.8 }}>
                               target {targetLabel(effectivePlatform)}
