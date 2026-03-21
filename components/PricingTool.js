@@ -191,7 +191,8 @@ export default function PricingTool() {
       'Section',
       'Name',
       'Unit',
-      'Stock',
+      'Trend',
+      'Prezzo Yen',
       'Supplier cost (€)',
       'Landed cost (€)',
       ...state.platforms.flatMap((platform) => [
@@ -208,7 +209,8 @@ export default function PricingTool() {
         row.section,
         row.name,
         row.unit,
-        row.stock,
+        row.trend || '',
+        row.yenPrice || 0,
         row.sourceCost.toFixed(2),
         row.landedCost.toFixed(2),
         ...state.platforms.flatMap((platform) => {
@@ -469,6 +471,7 @@ export default function PricingTool() {
                 <th>Prodotto</th>
                 <th>Sezione</th>
                 <th>Trend</th>
+                <th>Prezzo Yen</th>
                 <th>Costo fornitore</th>
                 <th>Landed</th>
                 {state.platforms.map((platform) => (
@@ -488,7 +491,8 @@ export default function PricingTool() {
                   </td>
 
                   <td>{row.section}</td>
-                  <td>{row.stock}</td>
+                  <td>{row.trend || '-'}</td>
+                  <td>{row.yenPrice ? `¥${row.yenPrice.toLocaleString('it-IT')}` : '-'}</td>
                   <td>{formatCurrency(row.sourceCost)}</td>
                   <td>{formatCurrency(row.landedCost)}</td>
 
@@ -511,7 +515,7 @@ export default function PricingTool() {
 
               {!tableRows.length && (
                 <tr>
-                  <td colSpan={5 + state.platforms.length} className="empty-cell">
+                  <td colSpan={6 + state.platforms.length} className="empty-cell">
                     Nessun prodotto trovato con i filtri selezionati.
                   </td>
                 </tr>
