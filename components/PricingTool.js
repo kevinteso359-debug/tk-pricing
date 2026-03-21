@@ -240,8 +240,8 @@ export default function PricingTool() {
           <span className="eyebrow">TKCollectibles · internal pricing tool</span>
           <h1>Price list per piattaforma</h1>
           <p>
-            Importa il listino fornitore e calcola automaticamente il prezzo consigliato per eBay,
-            Cardmarket, Shopify e vendita diretta in base alle fee che decidi tu.
+            Usa la tua price list come sorgente e prende il costo fornitore direttamente dalla colonna
+            Prezzo Euro.
           </p>
         </div>
 
@@ -266,7 +266,7 @@ export default function PricingTool() {
           {loading
             ? 'Caricamento feed...'
             : supplierData.status === 'live'
-              ? 'Feed live dal Google Sheet'
+              ? 'Feed live dalla tua price list'
               : 'Feed demo di fallback'}
         </div>
 
@@ -275,7 +275,7 @@ export default function PricingTool() {
           {supplierData.validUntil && <span>{supplierData.validUntil}</span>}
           {supplierData.sheetUrl && (
             <a href={supplierData.sheetUrl} target="_blank" rel="noreferrer">
-              Apri sheet fornitore
+              Apri sheet
             </a>
           )}
         </div>
@@ -293,7 +293,7 @@ export default function PricingTool() {
           <div className="form-grid">
             <label>
               <span>Valuta sorgente</span>
-              <input value="EUR (colonna fornitore)" disabled />
+              <input value="EUR (colonna Prezzo Euro)" disabled />
             </label>
 
             <label>
@@ -342,7 +342,7 @@ export default function PricingTool() {
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="BLACK BOLT, rocket, BOX..."
+                placeholder="Ninja Spinner, Black Bolt, M4..."
               />
             </label>
 
@@ -468,7 +468,7 @@ export default function PricingTool() {
               <tr>
                 <th>Prodotto</th>
                 <th>Sezione</th>
-                <th>Stock</th>
+                <th>Trend</th>
                 <th>Costo fornitore</th>
                 <th>Landed</th>
                 {state.platforms.map((platform) => (
