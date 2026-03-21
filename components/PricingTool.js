@@ -16,7 +16,7 @@ const STORAGE_KEY = 'tkcollectibles-platform-pricing-v1';
 
 function cloneDefaults() {
   return {
-    settings: { ...DEFAULT_GLOBAL_SETTINGS, sourceCurrency: 'JPY' },
+    settings: { ...DEFAULT_GLOBAL_SETTINGS, sourceCurrency: 'EUR' },
     platforms: DEFAULT_PLATFORMS.map((item) => ({ ...item }))
   };
 }
@@ -29,8 +29,7 @@ export default function PricingTool() {
     sheetUrl: '',
     status: 'loading',
     usedFallback: false,
-    error: '',
-    fx: null
+    error: ''
   });
 
   const [loading, setLoading] = useState(true);
@@ -49,9 +48,9 @@ export default function PricingTool() {
         setState({
           settings: {
             ...DEFAULT_GLOBAL_SETTINGS,
-            sourceCurrency: 'JPY',
+            sourceCurrency: 'EUR',
             ...(parsed.settings || {}),
-            sourceCurrency: 'JPY'
+            sourceCurrency: 'EUR'
           },
           platforms: DEFAULT_PLATFORMS.map((platform) => ({
             ...platform,
@@ -81,17 +80,6 @@ export default function PricingTool() {
         if (!active) return;
 
         setSupplierData(data);
-
-        if (data?.fx?.fxJpyToEur) {
-          setState((current) => ({
-            ...current,
-            settings: {
-              ...current.settings,
-              sourceCurrency: 'JPY',
-              fxJpyToEur: data.fx.fxJpyToEur
-            }
-          }));
-        }
       } catch (error) {
         if (!active) return;
 
@@ -167,7 +155,7 @@ export default function PricingTool() {
       settings: {
         ...current.settings,
         [key]: value,
-        sourceCurrency: 'JPY'
+        sourceCurrency: 'EUR'
       }
     }));
   }
@@ -192,8 +180,7 @@ export default function PricingTool() {
     setState({
       settings: {
         ...DEFAULT_GLOBAL_SETTINGS,
-        sourceCurrency: 'JPY',
-        fxJpyToEur: supplierData?.fx?.fxJpyToEur || DEFAULT_GLOBAL_SETTINGS.fxJpyToEur
+        sourceCurrency: 'EUR'
       },
       platforms: DEFAULT_PLATFORMS.map((item) => ({ ...item }))
     });
@@ -286,9 +273,6 @@ export default function PricingTool() {
         <div className="status-meta">
           {supplierData.updatedAt && <span>{supplierData.updatedAt}</span>}
           {supplierData.validUntil && <span>{supplierData.validUntil}</span>}
-          {supplierData.fx?.jpyPerEur && (
-            <span>ECB: 1 EUR = {Number(supplierData.fx.jpyPerEur).toFixed(2)} JPY</span>
-          )}
           {supplierData.sheetUrl && (
             <a href={supplierData.sheetUrl} target="_blank" rel="noreferrer">
               Apri sheet fornitore
@@ -309,12 +293,7 @@ export default function PricingTool() {
           <div className="form-grid">
             <label>
               <span>Valuta sorgente</span>
-              <input value="JPY → EUR automatico (ECB)" disabled />
-            </label>
-
-            <label>
-              <span>FX JPY → EUR automatico</span>
-              <input type="number" step="0.000001" value={state.settings.fxJpyToEur} readOnly />
+              <input value="EUR (colonna fornitore)" disabled />
             </label>
 
             <label>
