@@ -144,9 +144,9 @@ function getTrendInfo(trend) {
 Fee % sul totale incassato:
 (prezzo articolo IVA incl. + spedizione cliente IVA incl.)
 
-Logica:
-- vuoi ottenere un profitto target
-- il tool ti trova il prezzo finale IVA inclusa da mettere online
+Obiettivo:
+trovare il prezzo finale IVA inclusa dell'articolo tale che
+l'utile netto reale finale coincida con il target scelto.
 */
 function computeSuggestedPrice(product, platform, settings) {
   const landed = getLanded(product, settings);
@@ -176,6 +176,7 @@ function computeSuggestedPrice(product, platform, settings) {
       netReal: 0,
       profit: 0,
       realMarginPct: 0,
+      marginOnSalePct: 0,
       markupOnLandedPct: 0,
       targetProfit,
       landed
@@ -220,7 +221,8 @@ function computeAtListingPrice(product, platform, settings, listingPriceInclVat)
   const profit = netReal - landed;
 
   const markupOnLandedPct = landed > 0 ? profit / landed : 0;
-  const realMarginPct = salePrice > 0 ? profit / salePrice : 0;
+  const realMarginPct = netReal > 0 ? profit / netReal : 0;
+  const marginOnSalePct = salePrice > 0 ? profit / salePrice : 0;
 
   return {
     salePrice,
@@ -231,6 +233,7 @@ function computeAtListingPrice(product, platform, settings, listingPriceInclVat)
     netReal,
     profit,
     realMarginPct,
+    marginOnSalePct,
     markupOnLandedPct,
     landed
   };
