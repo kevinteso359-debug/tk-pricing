@@ -1,30 +1,245 @@
 'use client';
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import {
-  DEFAULT_GLOBAL_SETTINGS,
-  DEFAULT_PLATFORMS,
-  computePlatformPrice,
-  formatCurrency,
-  formatPercent,
-  getLandedCostEur,
-  getSourceCostEur,
-  sanitizeForCsv
-} from '../lib/pricing';
+import { DEFAULT_GLOBAL_SETTINGS, formatCurrency } from '../lib/pricing';
 
-const STORAGE_KEY = 'tkcollectibles-platform-pricing-v3';
+const STORAGE_KEY = 'tkcollectibles-pricing-v4';
+
+const DEFAULT_SETTINGS = {
+  ...DEFAULT_GLOBAL_SETTINGS,
+  iva: 0.22,
+  inboundShipping: 0,
+  packaging: 0.5,
+  misc: 0,
+  realShippingCostExVat: 4.36
+};
+
+const DEFAULT_PLATFORMS = [
+  {
+    key: 'ebay',
+    name: 'eBay',
+    feePct: 0.065,
+    paymentPct: 0.0035,
+    fixedFee: 0.35,
+    adsPct: 0.02,
+    couponPct: 0.0555,
+    shippingCustomerInclVat: 6.49,
+    targetMode: 'percent',
+    targetMarginPct: 0.13,
+    targetMarginEur: 8,
+    roundStep: 1,
+    ending: 0.99
+  },
+  {
+    key: 'cardmarket',
+    name: 'Cardmarket',
+    feePct: 0.05,
+    paymentPct: 0.02,
+    fixedFee: 0,
+    adsPct: 0,
+    couponPct: 0,
+    shippingCustomerInclVat: 5.5,
+    targetMode: 'percent',
+    targetMarginPct: 0.18,
+    targetMarginEur: 8,
+    roundStep: 1,
+    ending: 0.99
+  },
+  {
+    key: 'shopify',
+    name: 'Shopify',
+    feePct: 0.02,
+    paymentPct: 0.014,
+    fixedFee: 0.25,
+    adsPct: 0,
+    couponPct: 0,
+    shippingCustomerInclVat: 7.5,
+    targetMode: 'percent',
+    targetMarginPct: 0.16,
+    targetMarginEur: 8,
+    roundStep: 1,
+    ending: 0.99
+  },
+  {
+    key: 'direct',
+    name: 'Diretto',
+    feePct: 0,
+    paymentPct: 0,
+    fixedFee: 0,
+    adsPct: 0,
+    couponPct: 0,
+    shippingCustomerInclVat: 6.5,
+    targetMode: 'percent',
+    targetMarginPct: 0.12,
+    targetMarginEur: 8,
+    roundStep: 1,
+    ending: 0.99
+  }
+];
+
+function toNumber(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : 0;
+}
 
 function cloneDefaults() {
   return {
-    settings: {
-      ...DEFAULT_GLOBAL_SETTINGS,
-      sourceCurrency: 'EUR',
-      vatRate: DEFAULT_GLOBAL_SETTINGS.vatRate ?? 0.22,
-      realShippingCostExVat: DEFAULT_GLOBAL_SETTINGS.realShippingCostExVat ?? 4.36
-    },
+    settings: { ...DEFAULT_SETTINGS, sourceCurrency: 'EUR' },
     platforms: DEFAULT_PLATFORMS.map((item) => ({ ...item })),
     itemTargets: {}
   };
+}
+
+function roundUpWithEnding(value, step = 1, ending = 0.99) {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+
+  const safeStep = step > 0 ? step : 1;
+  const floored = Math.floor(value / safeStep) * safeStep;
+  let candidate = floored + ending;
+
+  if (candidate < value) candidate += safeStep;
+
+  return Number(candidate.toFixed(2));
+}
+
+function getCost(product) {
+  return toNumber(product?.costs?.EUR);
+}
+
+function getLanded(product, settings) {
+  return (
+    getCost(product) +
+    toNumber(settings.inboundShipping) +
+    toNumber(settings.packaging) +
+    toNumber(settings.misc)
+  );
+}
+
+function getTargetProfit(landed, platform) {
+  if (platform.targetMode === 'euro') {
+    return toNumber(platform.targetMarginEur);
+  }
+  return landed * toNumber(platform.targetMarginPct);
+}
+
+/*
+Ricostruzione coerente con il tuo flusso reale:
+
+1. Il cliente paga:
+   prezzo articolo IVA incl. + spedizione cliente IVA incl.
+
+2. eBay / piattaforma trattiene fee % sul totale incassato
+   + fee fissa + ads + coupon
+
+3. Quello che rimane va diviso per 1,22 per togliere IVA
+
+4. Poi togli:
+   - spedizione reale tua
+   - landed
+
+5. Il risultato è l'utile netto reale
+
+Vogliamo trovare il prezzo articolo IVA incl. tale che:
+utile netto reale = targetProfit
+*/
+function computeSuggestedPrice(product, platform, settings) {
+  const cost = getCost(product);
+  const landed = getLanded(product, settings);
+
+  const iva = toNumber(settings.iva);
+  const shippingReal = toNumber(settings.realShippingCostExVat);
+
+  const feePct =
+    toNumber(platform.feePct) +
+    toNumber(platform.paymentPct) +
+    toNumber(platform.adsPct) +
+    toNumber(platform.couponPct);
+
+  const fixedFee = toNumber(platform.fixedFee);
+  const shippingCustomer = toNumber(platform.shippingCustomerInclVat);
+  const targetProfit = getTargetProfit(landed, platform);
+
+  const denominator = 1 - feePct;
+
+  if (denominator <= 0) {
+    return {
+      salePrice: 0,
+      totalCustomerInclVat: 0,
+      feesAmount: 0,
+      payoutAfterFees: 0,
+      netAfterVat: 0,
+      netReal: 0,
+      profit: 0,
+      markupOnLandedPct: 0,
+      targetProfit,
+      landed,
+      cost
+    };
+  }
+
+  // Quello che ti deve restare prima della formula "gross-up"
+  const targetBase = landed + shippingReal + targetProfit;
+
+  // Risaliamo al lordo totale incassato necessario
+  const grossNeeded = ((targetBase + fixedFee) * (1 + iva)) / denominator;
+
+  // Togliamo la spedizione cliente per trovare solo il prezzo articolo
+  const rawSalePrice = grossNeeded - shippingCustomer;
+
+  const salePrice = roundUpWithEnding(
+    rawSalePrice,
+    toNumber(platform.roundStep),
+    toNumber(platform.ending)
+  );
+
+  return computeAtListingPrice(product, platform, settings, salePrice);
+}
+
+function computeAtListingPrice(product, platform, settings, listingPriceInclVat) {
+  const cost = getCost(product);
+  const landed = getLanded(product, settings);
+
+  const iva = toNumber(settings.iva);
+  const shippingReal = toNumber(settings.realShippingCostExVat);
+
+  const feePct =
+    toNumber(platform.feePct) +
+    toNumber(platform.paymentPct) +
+    toNumber(platform.adsPct) +
+    toNumber(platform.couponPct);
+
+  const fixedFee = toNumber(platform.fixedFee);
+  const shippingCustomer = toNumber(platform.shippingCustomerInclVat);
+
+  const salePrice = toNumber(listingPriceInclVat);
+  const totalCustomerInclVat = salePrice + shippingCustomer;
+
+  const feesAmount = totalCustomerInclVat * feePct + fixedFee;
+  const payoutAfterFees = totalCustomerInclVat - feesAmount;
+  const netAfterVat = payoutAfterFees / (1 + iva);
+  const netReal = netAfterVat - shippingReal;
+  const profit = netReal - landed;
+  const markupOnLandedPct = landed > 0 ? profit / landed : 0;
+
+  return {
+    salePrice,
+    totalCustomerInclVat,
+    feesAmount,
+    payoutAfterFees,
+    netAfterVat,
+    netReal,
+    profit,
+    markupOnLandedPct,
+    landed,
+    cost
+  };
+}
+
+function targetLabel(platform) {
+  if (platform.targetMode === 'euro') {
+    return formatCurrency(platform.targetMarginEur);
+  }
+  return `${(toNumber(platform.targetMarginPct) * 100).toFixed(1)}%`;
 }
 
 export default function PricingTool() {
@@ -53,10 +268,7 @@ export default function PricingTool() {
 
         setState({
           settings: {
-            ...DEFAULT_GLOBAL_SETTINGS,
-            sourceCurrency: 'EUR',
-            vatRate: DEFAULT_GLOBAL_SETTINGS.vatRate ?? 0.22,
-            realShippingCostExVat: DEFAULT_GLOBAL_SETTINGS.realShippingCostExVat ?? 4.36,
+            ...DEFAULT_SETTINGS,
             ...(parsed.settings || {}),
             sourceCurrency: 'EUR'
           },
@@ -130,37 +342,53 @@ export default function PricingTool() {
         return matchesSearch && matchesSection && matchesUnit;
       })
       .map((product) => {
-        const sourceCost = getSourceCostEur(product, state.settings);
-        const landedCost = getLandedCostEur(product, state.settings);
+        const cost = getCost(product);
+        const landed = getLanded(product, state.settings);
 
         const platformResults = Object.fromEntries(
           state.platforms.map((platform) => {
-            const override = state.itemTargets?.[product.id]?.[platform.key];
+            const override = state.itemTargets?.[product.id]?.[platform.key] || {};
 
             const effectivePlatform = {
               ...platform,
-              targetMode: override?.targetMode ?? platform.targetMode,
+              targetMode: override.targetMode ?? platform.targetMode,
               targetMarginPct:
-                override?.targetMarginPct !== undefined && override?.targetMarginPct !== ''
+                override.targetMarginPct !== undefined && override.targetMarginPct !== ''
                   ? Number(override.targetMarginPct)
                   : platform.targetMarginPct,
               targetMarginEur:
-                override?.targetMarginEur !== undefined && override?.targetMarginEur !== ''
+                override.targetMarginEur !== undefined && override.targetMarginEur !== ''
                   ? Number(override.targetMarginEur)
                   : platform.targetMarginEur
             };
 
+            const suggested = computeSuggestedPrice(product, effectivePlatform, state.settings);
+
+            const currentListingPrice =
+              override.currentPrice !== undefined && override.currentPrice !== ''
+                ? Number(override.currentPrice)
+                : null;
+
+            const current =
+              currentListingPrice && currentListingPrice > 0
+                ? computeAtListingPrice(product, effectivePlatform, state.settings, currentListingPrice)
+                : null;
+
             return [
               platform.key,
-              computePlatformPrice(landedCost, effectivePlatform, state.settings)
+              {
+                suggested,
+                current,
+                effectivePlatform
+              }
             ];
           })
         );
 
         return {
           ...product,
-          sourceCost,
-          landedCost,
+          cost,
+          landed,
           platformResults
         };
       });
@@ -168,13 +396,16 @@ export default function PricingTool() {
 
   const totals = useMemo(() => {
     const rowCount = tableRows.length || 1;
-    const averageLanded = tableRows.reduce((sum, row) => sum + row.landedCost, 0) / rowCount;
+    const averageLanded = tableRows.reduce((sum, row) => sum + row.landed, 0) / rowCount;
 
     return {
       products: tableRows.length,
       averageLanded,
       highestEbay:
-        tableRows.reduce((max, row) => Math.max(max, row.platformResults.ebay?.salePrice || 0), 0) || 0
+        tableRows.reduce(
+          (max, row) => Math.max(max, row.platformResults.ebay?.suggested?.salePrice || 0),
+          0
+        ) || 0
     };
   }, [tableRows]);
 
@@ -193,12 +424,7 @@ export default function PricingTool() {
     setState((current) => ({
       ...current,
       platforms: current.platforms.map((platform) =>
-        platform.key === key
-          ? {
-              ...platform,
-              [field]: value
-            }
-          : platform
+        platform.key === key ? { ...platform, [field]: value } : platform
       )
     }));
   }
@@ -248,11 +474,11 @@ export default function PricingTool() {
       ...state.platforms.flatMap((platform) => [
         `${platform.name} target mode`,
         `${platform.name} target`,
-        `${platform.name} shipping customer`,
-        `${platform.name} price IVA incl.`,
-        `${platform.name} net real`,
-        `${platform.name} profit`,
-        `${platform.name} markup landed`
+        `${platform.name} suggested price IVA incl.`,
+        `${platform.name} suggested profit`,
+        `${platform.name} suggested markup`,
+        `${platform.name} current price`,
+        `${platform.name} current profit`
       ])
     ];
 
@@ -265,28 +491,25 @@ export default function PricingTool() {
         row.unit,
         row.trend || '',
         row.yenPrice || 0,
-        row.sourceCost.toFixed(2),
-        row.landedCost.toFixed(2),
+        row.cost.toFixed(2),
+        row.landed.toFixed(2),
         ...state.platforms.flatMap((platform) => {
           const result = row.platformResults[platform.key];
-          const override = state.itemTargets?.[row.id]?.[platform.key];
-
-          const targetMode = override?.targetMode ?? platform.targetMode;
+          const override = state.itemTargets?.[row.id]?.[platform.key] || {};
+          const targetMode = override.targetMode ?? result.effectivePlatform.targetMode;
           const targetValue =
             targetMode === 'euro'
-              ? (override?.targetMarginEur ?? platform.targetMarginEur)
-              : (override?.targetMarginPct ?? platform.targetMarginPct);
+              ? formatCurrency(override.targetMarginEur ?? result.effectivePlatform.targetMarginEur)
+              : `${(toNumber(override.targetMarginPct ?? result.effectivePlatform.targetMarginPct) * 100).toFixed(1)}%`;
 
           return [
             targetMode,
-            targetMode === 'euro'
-              ? formatCurrency(targetValue)
-              : formatPercent(targetValue),
-            formatCurrency(platform.customerShippingInclVat),
-            result.salePrice.toFixed(2),
-            (result.netReal ?? 0).toFixed(2),
-            result.profit.toFixed(2),
-            `${((result.markupOnLandedPct ?? 0) * 100).toFixed(1)}%`
+            targetValue,
+            result.suggested.salePrice.toFixed(2),
+            result.suggested.profit.toFixed(2),
+            `${(result.suggested.markupOnLandedPct * 100).toFixed(1)}%`,
+            override.currentPrice || '',
+            result.current ? result.current.profit.toFixed(2) : ''
           ];
         })
       ];
@@ -308,10 +531,10 @@ export default function PricingTool() {
       <section className="hero-card">
         <div>
           <span className="eyebrow">TKCollectibles · internal pricing tool</span>
-          <h1>Price list per piattaforma</h1>
+          <h1>Prezzi consigliati</h1>
           <p>
             Lo scopo del tool è dirti a che prezzo vendere per ottenere il netto che vuoi.
-            Il prezzo finale include fee piattaforma, IVA e logica spedizione.
+            Le fee percentuali vengono calcolate sul totale incassato: articolo + spedizione cliente.
           </p>
         </div>
 
@@ -371,8 +594,8 @@ export default function PricingTool() {
               <input
                 type="number"
                 step="0.01"
-                value={state.settings.vatRate}
-                onChange={(e) => updateSetting('vatRate', e.target.value)}
+                value={state.settings.iva}
+                onChange={(e) => updateSetting('iva', e.target.value)}
               />
             </label>
 
@@ -463,7 +686,7 @@ export default function PricingTool() {
             <p className="helper error">{supplierData.error}</p>
           ) : (
             <p className="helper">
-              Fee % applicate sul totale incassato: articolo + spedizione cliente.
+              Puoi lavorare sia in % sul landed sia in € netti desiderati.
             </p>
           )}
         </div>
@@ -472,7 +695,7 @@ export default function PricingTool() {
       <section className="panel">
         <div className="panel-head">
           <h2>Fee e target globali per piattaforma</h2>
-          <p className="helper">Puoi usare target in % oppure target in € netti.</p>
+          <p className="helper">Qui imposti la logica base. Sotto puoi personalizzare per singolo articolo.</p>
         </div>
 
         <div className="platform-grid">
@@ -502,6 +725,26 @@ export default function PricingTool() {
                 </label>
 
                 <label>
+                  <span>Ads %</span>
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={platform.adsPct}
+                    onChange={(e) => updatePlatform(platform.key, 'adsPct', e.target.value)}
+                  />
+                </label>
+
+                <label>
+                  <span>Coupon %</span>
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={platform.couponPct}
+                    onChange={(e) => updatePlatform(platform.key, 'couponPct', e.target.value)}
+                  />
+                </label>
+
+                <label>
                   <span>Fee fissa €</span>
                   <input
                     type="number"
@@ -516,8 +759,8 @@ export default function PricingTool() {
                   <input
                     type="number"
                     step="0.01"
-                    value={platform.customerShippingInclVat}
-                    onChange={(e) => updatePlatform(platform.key, 'customerShippingInclVat', e.target.value)}
+                    value={platform.shippingCustomerInclVat}
+                    onChange={(e) => updatePlatform(platform.key, 'shippingCustomerInclVat', e.target.value)}
                   />
                 </label>
 
@@ -571,7 +814,7 @@ export default function PricingTool() {
         <div className="panel-head">
           <h2>Prezzi consigliati</h2>
           <p className="helper">
-            Prezzo finale IVA inclusa da pubblicare + netto reale in euro + markup sul landed.
+            Vedi il prezzo suggerito, il netto reale, il markup sul landed e — se vuoi — confronti anche il tuo prezzo attuale.
           </p>
         </div>
 
@@ -605,31 +848,33 @@ export default function PricingTool() {
                     <td>{row.section}</td>
                     <td>{row.trend || '-'}</td>
                     <td>{row.yenPrice ? `¥${row.yenPrice.toLocaleString('it-IT')}` : '-'}</td>
-                    <td>{formatCurrency(row.sourceCost)}</td>
-                    <td>{formatCurrency(row.landedCost)}</td>
+                    <td>{formatCurrency(row.cost)}</td>
+                    <td>{formatCurrency(row.landed)}</td>
 
                     {state.platforms.map((platform) => {
                       const result = row.platformResults[platform.key];
-                      const override = state.itemTargets?.[row.id]?.[platform.key];
-                      const targetMode = override?.targetMode ?? platform.targetMode;
-                      const targetLabel =
-                        targetMode === 'euro'
-                          ? formatCurrency(override?.targetMarginEur ?? platform.targetMarginEur)
-                          : formatPercent(override?.targetMarginPct ?? platform.targetMarginPct);
+                      const suggested = result.suggested;
+                      const current = result.current;
+                      const effectivePlatform = result.effectivePlatform;
 
                       return (
                         <td key={`${row.id}-${platform.key}`}>
                           <div className="price-cell">
-                            <strong>{formatCurrency(result.salePrice)}</strong>
+                            <strong>{formatCurrency(suggested.salePrice)}</strong>
                             <span>
-                              netto {formatCurrency(result.netReal)} · utile {formatCurrency(result.profit)}
+                              netto {formatCurrency(suggested.netReal)} · utile {formatCurrency(suggested.profit)}
                             </span>
                             <span style={{ display: 'block', marginTop: 4, opacity: 0.8 }}>
-                              markup landed {formatPercent(result.markupOnLandedPct)}
+                              markup landed {(suggested.markupOnLandedPct * 100).toFixed(1)}%
                             </span>
                             <span style={{ display: 'block', marginTop: 4, opacity: 0.8 }}>
-                              target {targetLabel}
+                              target {targetLabel(effectivePlatform)}
                             </span>
+                            {current && (
+                              <span style={{ display: 'block', marginTop: 6, opacity: 0.9 }}>
+                                attuale {formatCurrency(current.salePrice)} → utile {formatCurrency(current.profit)}
+                              </span>
+                            )}
                           </div>
                         </td>
                       );
@@ -644,7 +889,7 @@ export default function PricingTool() {
                       <div
                         style={{
                           display: 'grid',
-                          gridTemplateColumns: `minmax(240px, 1.2fr) repeat(${state.platforms.length}, minmax(180px, 1fr)) auto`,
+                          gridTemplateColumns: `minmax(240px, 1.2fr) repeat(${state.platforms.length}, minmax(220px, 1fr)) auto`,
                           gap: '12px',
                           alignItems: 'end'
                         }}
@@ -654,17 +899,16 @@ export default function PricingTool() {
                             Target personalizzati per questo articolo
                           </div>
                           <div style={{ fontSize: 13, opacity: 0.7 }}>
-                            Puoi scegliere se impostare il target in % sul landed oppure in € netti.
+                            Puoi scegliere % sul landed o € netti. In più puoi inserire il prezzo attuale per confrontarlo col suggerito.
                           </div>
                         </div>
 
                         {state.platforms.map((platform) => {
                           const override = state.itemTargets?.[row.id]?.[platform.key] || {};
                           const targetMode = override.targetMode ?? platform.targetMode;
-                          const targetMarginPct =
-                            override.targetMarginPct ?? platform.targetMarginPct;
-                          const targetMarginEur =
-                            override.targetMarginEur ?? platform.targetMarginEur;
+                          const targetMarginPct = override.targetMarginPct ?? platform.targetMarginPct;
+                          const targetMarginEur = override.targetMarginEur ?? platform.targetMarginEur;
+                          const currentPrice = override.currentPrice ?? '';
 
                           return (
                             <div key={`${row.id}-${platform.key}-input`}>
@@ -713,7 +957,7 @@ export default function PricingTool() {
                                 />
                               </label>
 
-                              <label style={{ display: 'block' }}>
+                              <label style={{ display: 'block', marginBottom: 8 }}>
                                 <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
                                   {platform.name} target €
                                 </span>
@@ -723,6 +967,28 @@ export default function PricingTool() {
                                   value={targetMarginEur}
                                   onChange={(e) =>
                                     updateItemTarget(row.id, platform.key, 'targetMarginEur', e.target.value)
+                                  }
+                                  style={{
+                                    width: '100%',
+                                    background: 'rgba(255,255,255,0.04)',
+                                    border: '1px solid rgba(255,255,255,0.12)',
+                                    color: 'white',
+                                    borderRadius: 10,
+                                    padding: '10px 12px'
+                                  }}
+                                />
+                              </label>
+
+                              <label style={{ display: 'block' }}>
+                                <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
+                                  {platform.name} prezzo attuale
+                                </span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={currentPrice}
+                                  onChange={(e) =>
+                                    updateItemTarget(row.id, platform.key, 'currentPrice', e.target.value)
                                   }
                                   style={{
                                     width: '100%',
