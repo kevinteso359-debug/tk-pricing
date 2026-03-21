@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { DEFAULT_GLOBAL_SETTINGS, formatCurrency } from '../lib/pricing';
 
-const STORAGE_KEY = 'tkcollectibles-pricing-v4';
+const STORAGE_KEY = 'tkcollectibles-pricing-v5';
 
 const DEFAULT_SETTINGS = {
   ...DEFAULT_GLOBAL_SETTINGS,
@@ -126,6 +126,28 @@ function getTargetProfit(landed, platform) {
   return landed * toNumber(platform.targetMarginPct);
 }
 
+function getTrendInfo(trend) {
+  const text = String(trend || '').trim().toLowerCase();
+
+  if (text.includes('up') || text.includes('↑') || text.includes('rialzo') || text.includes('sale')) {
+    return { icon: '🔺', label: trend || 'Up' };
+  }
+
+  if (text.includes('down') || text.includes('↓') || text.includes('ribasso') || text.includes('scende')) {
+    return { icon: '🔻', label: trend || 'Down' };
+  }
+
+  return { icon: '➖', label: trend || 'Invariato' };
+}
+
+/*
+Fee % sul totale incassato:
+(prezzo articolo IVA incl. + spedizione cliente IVA incl.)
+
+Logica:
+- vuoi ottenere un profitto target
+- il tool ti trova il prezzo finale IVA inclusa da mettere online
+*/
 function computeSuggestedPrice(product, platform, settings) {
   const landed = getLanded(product, settings);
 
@@ -323,6 +345,7 @@ export default function PricingTool() {
       .map((product) => {
         const cost = getCost(product);
         const landed = getLanded(product, state.settings);
+        const trendInfo = getTrendInfo(product.trend);
 
         const platformResults = Object.fromEntries(
           state.platforms.map((platform) => {
@@ -343,14 +366,14 @@ export default function PricingTool() {
 
             const suggested = computeSuggestedPrice(product, effectivePlatform, state.settings);
 
-            const currentListingPrice =
-              override.currentPrice !== undefined && override.currentPrice !== ''
-                ? Number(override.currentPrice)
+            const finalPrice =
+              override.finalPrice !== undefined && override.finalPrice !== ''
+                ? Number(override.finalPrice)
                 : null;
 
             const current =
-              currentListingPrice && currentListingPrice > 0
-                ? computeAtListingPrice(product, effectivePlatform, state.settings, currentListingPrice)
+              finalPrice && finalPrice > 0
+                ? computeAtListingPrice(product, effectivePlatform, state.settings, finalPrice)
                 : null;
 
             return [
@@ -358,7 +381,8 @@ export default function PricingTool() {
               {
                 suggested,
                 current,
-                effectivePlatform
+                effectivePlatform,
+                finalPrice
               }
             ];
           })
@@ -368,6 +392,7 @@ export default function PricingTool() {
           ...product,
           cost,
           landed,
+          trendInfo,
           platformResults
         };
       });
@@ -439,74 +464,6 @@ export default function PricingTool() {
   function resetDefaults() {
     window.localStorage.removeItem(STORAGE_KEY);
     setState(cloneDefaults());
-  }
-
-  function exportCsv() {
-    const headers = [
-      'Section',
-      'Name',
-      'Unit',
-      'Trend',
-      'Prezzo Yen',
-      'Supplier cost (€)',
-      'Landed cost (€)',
-      ...state.platforms.flatMap((platform) => [
-        `${platform.name} target mode`,
-        `${platform.name} target`,
-        `${platform.name} suggested price IVA incl.`,
-        `${platform.name} net real`,
-        `${platform.name} real margin %`,
-        `${platform.name} profit`,
-        `${platform.name} markup landed`,
-        `${platform.name} current price`,
-        `${platform.name} current profit`
-      ])
-    ];
-
-    const lines = [headers.join(',')];
-
-    tableRows.forEach((row) => {
-      const cells = [
-        row.section,
-        row.name,
-        row.unit,
-        row.trend || '',
-        row.yenPrice || 0,
-        row.cost.toFixed(2),
-        row.landed.toFixed(2),
-        ...state.platforms.flatMap((platform) => {
-          const result = row.platformResults[platform.key];
-          const override = state.itemTargets?.[row.id]?.[platform.key] || {};
-          const targetMode = override.targetMode ?? result.effectivePlatform.targetMode;
-          const targetValue =
-            targetMode === 'euro'
-              ? formatCurrency(override.targetMarginEur ?? result.effectivePlatform.targetMarginEur)
-              : formatPercent(override.targetMarginPct ?? result.effectivePlatform.targetMarginPct);
-
-          return [
-            targetMode,
-            targetValue,
-            result.suggested.salePrice.toFixed(2),
-            (result.suggested.netReal ?? 0).toFixed(2),
-            formatPercent(result.suggested.realMarginPct ?? 0),
-            result.suggested.profit.toFixed(2),
-            formatPercent(result.suggested.markupOnLandedPct ?? 0),
-            override.currentPrice || '',
-            result.current ? result.current.profit.toFixed(2) : ''
-          ];
-        })
-      ];
-
-      lines.push(cells.map(String).join(','));
-    });
-
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'tkcollectibles-platform-pricing.csv';
-    link.click();
-    URL.revokeObjectURL(url);
   }
 
   return (
@@ -627,9 +584,6 @@ export default function PricingTool() {
         <div className="panel">
           <div className="panel-head">
             <h2>Filtri</h2>
-            <button className="ghost-button" onClick={exportCsv}>
-              Export CSV
-            </button>
           </div>
 
           <div className="form-grid">
@@ -797,7 +751,7 @@ export default function PricingTool() {
         <div className="panel-head">
           <h2>Prezzi consigliati</h2>
           <p className="helper">
-            Vedi il prezzo suggerito, il netto reale, il margine reale %, il markup sul landed e — se vuoi — confronti anche il tuo prezzo attuale.
+            Vedi il prezzo suggerito, il netto reale, il margine reale %, il markup sul landed e puoi inserire il prezzo finale per ogni piattaforma.
           </p>
         </div>
 
@@ -829,7 +783,11 @@ export default function PricingTool() {
                     </td>
 
                     <td>{row.section}</td>
-                    <td>{row.trend || '-'}</td>
+                    <td>
+                      <span title={row.trendInfo.label}>
+                        {row.trendInfo.icon} {row.trendInfo.label}
+                      </span>
+                    </td>
                     <td>{row.yenPrice ? `¥${row.yenPrice.toLocaleString('it-IT')}` : '-'}</td>
                     <td>{formatCurrency(row.cost)}</td>
                     <td>{formatCurrency(row.landed)}</td>
@@ -843,21 +801,19 @@ export default function PricingTool() {
                       return (
                         <td key={`${row.id}-${platform.key}`}>
                           <div className="price-cell">
-                            <strong>{formatCurrency(suggested.salePrice)}</strong>
+                            <strong>{formatCurrency(current?.salePrice ?? suggested.salePrice)}</strong>
                             <span>
-                              netto {formatCurrency(suggested.netReal)} · margine reale {formatPercent(suggested.realMarginPct)}
+                              netto {formatCurrency(current?.netReal ?? suggested.netReal)} · margine reale {formatPercent(current?.realMarginPct ?? suggested.realMarginPct)}
                             </span>
                             <span style={{ display: 'block', marginTop: 4, opacity: 0.8 }}>
-                              utile {formatCurrency(suggested.profit)} · markup landed {formatPercent(suggested.markupOnLandedPct)}
+                              utile {formatCurrency(current?.profit ?? suggested.profit)} · markup landed {formatPercent(current?.markupOnLandedPct ?? suggested.markupOnLandedPct)}
                             </span>
                             <span style={{ display: 'block', marginTop: 4, opacity: 0.8 }}>
                               target {targetLabel(effectivePlatform)}
                             </span>
-                            {current && (
-                              <span style={{ display: 'block', marginTop: 6, opacity: 0.9 }}>
-                                attuale {formatCurrency(current.salePrice)} → utile {formatCurrency(current.profit)}
-                              </span>
-                            )}
+                            <span style={{ display: 'block', marginTop: 6, opacity: 0.9 }}>
+                              suggerito {formatCurrency(suggested.salePrice)}
+                            </span>
                           </div>
                         </td>
                       );
@@ -872,17 +828,17 @@ export default function PricingTool() {
                       <div
                         style={{
                           display: 'grid',
-                          gridTemplateColumns: `minmax(240px, 1.2fr) repeat(${state.platforms.length}, minmax(220px, 1fr)) auto`,
+                          gridTemplateColumns: `minmax(240px, 1.2fr) repeat(${state.platforms.length}, minmax(240px, 1fr)) auto`,
                           gap: '12px',
                           alignItems: 'end'
                         }}
                       >
                         <div>
                           <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
-                            Target personalizzati per questo articolo
+                            Target personalizzati e prezzo finale per questo articolo
                           </div>
                           <div style={{ fontSize: 13, opacity: 0.7 }}>
-                            Puoi scegliere % sul landed o € netti. In più puoi inserire il prezzo attuale per confrontarlo col suggerito.
+                            Puoi scegliere % sul landed o € netti, e impostare direttamente il prezzo finale per ogni piattaforma.
                           </div>
                         </div>
 
@@ -891,7 +847,7 @@ export default function PricingTool() {
                           const targetMode = override.targetMode ?? platform.targetMode;
                           const targetMarginPct = override.targetMarginPct ?? platform.targetMarginPct;
                           const targetMarginEur = override.targetMarginEur ?? platform.targetMarginEur;
-                          const currentPrice = override.currentPrice ?? '';
+                          const finalPrice = override.finalPrice ?? '';
 
                           return (
                             <div key={`${row.id}-${platform.key}-input`}>
@@ -964,14 +920,14 @@ export default function PricingTool() {
 
                               <label style={{ display: 'block' }}>
                                 <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
-                                  {platform.name} prezzo attuale
+                                  {platform.name} prezzo finale
                                 </span>
                                 <input
                                   type="number"
                                   step="0.01"
-                                  value={currentPrice}
+                                  value={finalPrice}
                                   onChange={(e) =>
-                                    updateItemTarget(row.id, platform.key, 'currentPrice', e.target.value)
+                                    updateItemTarget(row.id, platform.key, 'finalPrice', e.target.value)
                                   }
                                   style={{
                                     width: '100%',
