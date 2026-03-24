@@ -80,6 +80,7 @@ const DEFAULT_PLATFORMS = [
 const SHEET_TABS = [
   { key: 'pokemon', label: 'Pokémon' },
   { key: 'onepiece', label: 'One Piece' }
+   { key: 'pokemon kor', label: 'Pokemon Kor' }
 ];
 
 function toNumber(value) {
