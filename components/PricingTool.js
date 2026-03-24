@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { DEFAULT_GLOBAL_SETTINGS, formatCurrency } from '../lib/pricing';
 
-const STORAGE_KEY = 'tkcollectibles-pricing-v7';
+const STORAGE_KEY = 'tkcollectibles-pricing-v8';
 
 const DEFAULT_SETTINGS = {
   ...DEFAULT_GLOBAL_SETTINGS,
@@ -79,8 +79,8 @@ const DEFAULT_PLATFORMS = [
 
 const SHEET_TABS = [
   { key: 'pokemon', label: 'Pokémon' },
-  { key: 'onepiece', label: 'One Piece' }
-   { key: 'pokemon kor', label: 'Pokemon Kor' }
+  { key: 'onepiece', label: 'One Piece' },
+  { key: 'dragonball', label: 'Dragon Ball' }
 ];
 
 function toNumber(value) {
@@ -554,7 +554,13 @@ export default function PricingTool() {
           {loading
             ? 'Caricamento feed...'
             : supplierData.status === 'live'
-              ? `Feed live: ${state.activeSheet === 'pokemon' ? 'Pokémon' : 'One Piece'}`
+              ? `Feed live: ${
+                  state.activeSheet === 'pokemon'
+                    ? 'Pokémon'
+                    : state.activeSheet === 'onepiece'
+                      ? 'One Piece'
+                      : 'Dragon Ball'
+                }`
               : 'Feed demo di fallback'}
         </div>
 
@@ -647,7 +653,7 @@ export default function PricingTool() {
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Ninja Spinner, OP-09, Romance Dawn..."
+                placeholder="Ninja Spinner, OP-09, FB-01..."
               />
             </label>
 
