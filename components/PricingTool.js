@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { DEFAULT_GLOBAL_SETTINGS, formatCurrency } from '../lib/pricing';
 
-const STORAGE_KEY = 'tkcollectibles-pricing-v6';
+const STORAGE_KEY = 'tkcollectibles-pricing-v7';
 
 const DEFAULT_SETTINGS = {
   ...DEFAULT_GLOBAL_SETTINGS,
@@ -77,6 +77,11 @@ const DEFAULT_PLATFORMS = [
   }
 ];
 
+const SHEET_TABS = [
+  { key: 'pokemon', label: 'Pokémon' },
+  { key: 'onepiece', label: 'One Piece' }
+];
+
 function toNumber(value) {
   const num = Number(value);
   return Number.isFinite(num) ? num : 0;
@@ -90,7 +95,8 @@ function cloneDefaults() {
   return {
     settings: { ...DEFAULT_SETTINGS, sourceCurrency: 'EUR' },
     platforms: DEFAULT_PLATFORMS.map((item) => ({ ...item })),
-    itemTargets: {}
+    itemTargets: {},
+    activeSheet: 'pokemon'
   };
 }
 
@@ -246,7 +252,8 @@ export default function PricingTool() {
     sheetUrl: '',
     status: 'loading',
     usedFallback: false,
-    error: ''
+    error: '',
+    sheetKey: 'pokemon'
   });
 
   const [loading, setLoading] = useState(true);
@@ -273,7 +280,8 @@ export default function PricingTool() {
             ...platform,
             ...((parsed.platforms || []).find((item) => item.key === platform.key) || {})
           })),
-          itemTargets: parsed.itemTargets || {}
+          itemTargets: parsed.itemTargets || {},
+          activeSheet: parsed.activeSheet || 'pokemon'
         });
       }
     } catch {
@@ -292,7 +300,7 @@ export default function PricingTool() {
       setLoading(true);
 
       try {
-        const response = await fetch('/api/supplier-feed', { cache: 'no-store' });
+        const response = await fetch(`/api/supplier-feed?sheet=${state.activeSheet}`, { cache: 'no-store' });
         const data = await response.json();
 
         if (!active) return;
@@ -316,7 +324,7 @@ export default function PricingTool() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [state.activeSheet]);
 
   const sections = useMemo(() => {
     const set = new Set(['all']);
@@ -345,7 +353,7 @@ export default function PricingTool() {
 
         const platformResults = Object.fromEntries(
           state.platforms.map((platform) => {
-            const override = state.itemTargets?.[product.id]?.[platform.key] || {};
+            const override = state.itemTargets?.[`${state.activeSheet}:${product.id}`]?.[platform.key] || {};
 
             const effectivePlatform = {
               ...platform,
@@ -430,14 +438,16 @@ export default function PricingTool() {
   }
 
   function updateItemTarget(productId, platformKey, field, value) {
+    const scopedId = `${state.activeSheet}:${productId}`;
+
     setState((current) => ({
       ...current,
       itemTargets: {
         ...current.itemTargets,
-        [productId]: {
-          ...(current.itemTargets?.[productId] || {}),
+        [scopedId]: {
+          ...(current.itemTargets?.[scopedId] || {}),
           [platformKey]: {
-            ...(current.itemTargets?.[productId]?.[platformKey] || {}),
+            ...(current.itemTargets?.[scopedId]?.[platformKey] || {}),
             [field]: value
           }
         }
@@ -446,9 +456,11 @@ export default function PricingTool() {
   }
 
   function resetItemTargets(productId) {
+    const scopedId = `${state.activeSheet}:${productId}`;
+
     setState((current) => {
       const next = { ...(current.itemTargets || {}) };
-      delete next[productId];
+      delete next[scopedId];
 
       return {
         ...current,
@@ -463,9 +475,21 @@ export default function PricingTool() {
   }
 
   function toggleRow(productId) {
+    const scopedId = `${state.activeSheet}:${productId}`;
     setOpenRows((current) => ({
       ...current,
-      [productId]: !current[productId]
+      [scopedId]: !current[scopedId]
+    }));
+  }
+
+  function changeSheet(sheetKey) {
+    setSearch('');
+    setSectionFilter('all');
+    setUnitFilter('all');
+    setOpenRows({});
+    setState((current) => ({
+      ...current,
+      activeSheet: sheetKey
     }));
   }
 
@@ -497,12 +521,39 @@ export default function PricingTool() {
         </div>
       </section>
 
+      <section className="panel" style={{ marginBottom: 18 }}>
+        <div className="panel-head">
+          <h2>Catalogo</h2>
+          <p className="helper">Seleziona il foglio da visualizzare.</p>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          {SHEET_TABS.map((tab) => {
+            const isActive = state.activeSheet === tab.key;
+            return (
+              <button
+                key={tab.key}
+                onClick={() => changeSheet(tab.key)}
+                className="ghost-button"
+                style={{
+                  minWidth: 140,
+                  borderColor: isActive ? 'rgba(255,255,255,0.38)' : undefined,
+                  background: isActive ? 'rgba(255,255,255,0.08)' : undefined
+                }}
+              >
+                {isActive ? `● ${tab.label}` : tab.label}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
       <section className="status-row">
         <div className={`status-pill ${supplierData.status === 'live' ? 'ok' : 'warn'}`}>
           {loading
             ? 'Caricamento feed...'
             : supplierData.status === 'live'
-              ? 'Feed live dalla tua price list'
+              ? `Feed live: ${state.activeSheet === 'pokemon' ? 'Pokémon' : 'One Piece'}`
               : 'Feed demo di fallback'}
         </div>
 
@@ -595,7 +646,7 @@ export default function PricingTool() {
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Ninja Spinner, Black Bolt, M4..."
+                placeholder="Ninja Spinner, OP-09, Romance Dawn..."
               />
             </label>
 
@@ -776,10 +827,11 @@ export default function PricingTool() {
 
             <tbody>
               {tableRows.map((row) => {
-                const isOpen = Boolean(openRows[row.id]);
+                const scopedId = `${state.activeSheet}:${row.id}`;
+                const isOpen = Boolean(openRows[scopedId]);
 
                 return (
-                  <Fragment key={row.id}>
+                  <Fragment key={scopedId}>
                     <tr>
                       <td>
                         <div className="product-cell">
@@ -805,7 +857,7 @@ export default function PricingTool() {
                         const effectivePlatform = result.effectivePlatform;
 
                         return (
-                          <td key={`${row.id}-${platform.key}`}>
+                          <td key={`${scopedId}-${platform.key}`}>
                             <div className="price-cell">
                               <strong>{formatCurrency(current?.salePrice ?? suggested.salePrice)}</strong>
                               <span>
@@ -882,14 +934,14 @@ export default function PricingTool() {
                             </div>
 
                             {state.platforms.map((platform) => {
-                              const override = state.itemTargets?.[row.id]?.[platform.key] || {};
+                              const override = state.itemTargets?.[`${state.activeSheet}:${row.id}`]?.[platform.key] || {};
                               const targetMode = override.targetMode ?? platform.targetMode;
                               const targetMarginPct = override.targetMarginPct ?? platform.targetMarginPct;
                               const targetMarginEur = override.targetMarginEur ?? platform.targetMarginEur;
                               const finalPrice = override.finalPrice ?? '';
 
                               return (
-                                <div key={`${row.id}-${platform.key}-input`}>
+                                <div key={`${scopedId}-${platform.key}-input`}>
                                   <label style={{ display: 'block', marginBottom: 8 }}>
                                     <span style={{ display: 'block', fontSize: 12, opacity: 0.8, marginBottom: 6 }}>
                                       {platform.name} modalità
