@@ -9,10 +9,10 @@ const SHEETS = {
   onepiece: {
     gid: '638582406',
     editUrl: 'https://docs.google.com/spreadsheets/d/1VaZfKpSnjYcoqGL4oewT4IA8owpGCTHtU71yv5jcjqk/edit?gid=638582406#gid=638582406'
-  }
-  pokemon kor: {
-    gid: '1633110845',
-    editUrl: 'https://docs.google.com/spreadsheets/d/1VaZfKpSnjYcoqGL4oewT4IA8owpGCTHtU71yv5jcjqk/edit?gid=1633110845#gid=1633110845'
+  },
+  dragonball: {
+    gid: '2096091405',
+    editUrl: 'https://docs.google.com/spreadsheets/d/1VaZfKpSnjYcoqGL4oewT4IA8owpGCTHtU71yv5jcjqk/edit?gid=2096091405#gid=2096091405'
   }
 };
 
