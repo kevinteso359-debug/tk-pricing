@@ -1,17 +1,35 @@
 import { NextResponse } from 'next/server';
 import { fallbackSupplierData, parseSupplierCsv } from '../../../lib/sheet';
 
-const SHEET_URL =
-  'https://docs.google.com/spreadsheets/d/1VaZfKpSnjYcoqGL4oewT4IA8owpGCTHtU71yv5jcjqk/export?format=csv&gid=0';
+const SHEETS = {
+  pokemon: {
+    gid: '0',
+    editUrl: 'https://docs.google.com/spreadsheets/d/1VaZfKpSnjYcoqGL4oewT4IA8owpGCTHtU71yv5jcjqk/edit?gid=0#gid=0'
+  },
+  onepiece: {
+    gid: '638582406',
+    editUrl: 'https://docs.google.com/spreadsheets/d/1VaZfKpSnjYcoqGL4oewT4IA8owpGCTHtU71yv5jcjqk/edit?gid=638582406#gid=638582406'
+  }
+};
 
-export async function GET() {
+function getSheetUrl(gid) {
+  return `https://docs.google.com/spreadsheets/d/1VaZfKpSnjYcoqGL4oewT4IA8owpGCTHtU71yv5jcjqk/export?format=csv&gid=${gid}`;
+}
+
+export async function GET(request) {
+  const { searchParams } = new URL(request.url);
+  const sheetKey = (searchParams.get('sheet') || 'pokemon').toLowerCase();
+
+  const selectedSheet = SHEETS[sheetKey] || SHEETS.pokemon;
+  const csvUrl = getSheetUrl(selectedSheet.gid);
+
   try {
-    const response = await fetch(SHEET_URL, {
+    const response = await fetch(csvUrl, {
       cache: 'no-store'
     });
 
     if (!response.ok) {
-      throw new Error(`Errore download CSV fornitore: ${response.status}`);
+      throw new Error(`Errore download CSV: ${response.status}`);
     }
 
     const csvText = await response.text();
@@ -24,7 +42,8 @@ export async function GET() {
       products: parsed.products || [],
       usedFallback: parsed.usedFallback || false,
       error: '',
-      sheetUrl: SHEET_URL.replace('/export?format=csv&gid=0', '/edit?gid=0#gid=0')
+      sheetUrl: selectedSheet.editUrl,
+      sheetKey
     });
   } catch (error) {
     const fallback = fallbackSupplierData();
@@ -36,7 +55,8 @@ export async function GET() {
       products: fallback.products || [],
       usedFallback: true,
       error: error?.message || 'Errore nel caricamento del feed',
-      sheetUrl: SHEET_URL.replace('/export?format=csv&gid=0', '/edit?gid=0#gid=0')
+      sheetUrl: selectedSheet.editUrl,
+      sheetKey
     });
   }
 }
